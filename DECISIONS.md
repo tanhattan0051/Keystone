@@ -1768,3 +1768,37 @@ exactly like `Engine.lexicon`, so no existing test or corpus fixture is
 affected until something installs it — proven by full-suite regression
 (`LexiconRestoreTests`, `LiteralRestoreTests`, `LiteralAfterCancelTests`,
 `EagerRestoreTests`, and the whole corpus suite are all unchanged).
+
+## Deferred across-coda circumflex (smooth typing)
+
+`freeMarkAcrossCoda` lets a Telex quality mark cross a consonant coda to
+circumflex an earlier vowel (`trene`→trên, `tana`→tân) — the maintainer's
+"bỏ dấu ở cuối" style. The catch: at the moment the second vowel is typed,
+`tan`+`a` and `man`+`a` are the SAME keystrokes, so eagerly applying the mark
+turns a still-in-progress English word into pseudo-Vietnamese mid-word
+(`manager` flashes `mân`→`mâng` before the later keys make it invalid and it
+reverts). OpenKey has the exact same behavior (it shows `mânger`), so this is
+inherent to the feature, not a bug in one engine — the two keystroke streams
+are genuinely indistinguishable while typing.
+
+**Fix: apply the across-coda circumflex ONLY at commit, never mid-word.**
+`Telex.fold`/`apply` take a `committing` flag; `Engine.interpret` passes it
+`true` only for `finalize`'s word-boundary fold and `false` for the
+per-keystroke `rerender`. The across-coda branch (`Telex.apply`, the
+`freeMarkAcrossCoda` circumflex fallback) is gated on `committing`, so:
+
+- While typing, `tana`/`trene` stay literal (`tana`, `trene`) — no mark, no
+  flash. `manager` shows `mana`/`manag`/`manage`/`manager` throughout.
+- At the word boundary, the fold runs with `committing: true`: `tana`→`tân`,
+  `trene`→`trên` (valid, kept), while `manager` folds to the invalid `mânger`
+  and `restoreIfInvalid` reverts it to raw `manager`.
+
+Everything else stays EAGER (applied per keystroke), so nothing else feels
+delayed: the within-nucleus circumflex (`aa`→â, `treen`→trên), the đ-stroke
+(`dadx`→đã, `dadng`→đang) and all tone marks (`toans`→toán, `camr`→cảm) are
+untouched — only the across-coda VOWEL mark waits for the boundary. The trade
+is that `tân` (typed `tana`) appears when the syllable is committed rather than
+instantly; in exchange there is never a wrong mid-word flash, so typing reads
+as smooth (and strictly cleaner than OpenKey, which leaves `mânger`). Pinned by
+`DeferredCircumflexTests.swift`; every existing test (which asserts committed
+output) is unchanged, since commit behavior is identical.

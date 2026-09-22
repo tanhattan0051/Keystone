@@ -51,7 +51,7 @@ enum Telex {
         _ keys: [Character], quickTelex: Bool = false,
         quickStartConsonant: Bool = false, quickEndConsonant: Bool = false,
         allowFreeToneMark: Bool = true, freeMarkAcrossCoda: Bool = false,
-        literalAfterCancel: Bool = false
+        literalAfterCancel: Bool = false, committing: Bool = false
     ) -> Composition {
         var cells: [Cell] = []
         var tone: Tone = .ngang
@@ -82,7 +82,8 @@ enum Telex {
                                quickStartConsonant: quickStartConsonant,
                                quickEndConsonant: quickEndConsonant,
                                allowFreeToneMark: allowFreeToneMark,
-                               freeMarkAcrossCoda: freeMarkAcrossCoda)
+                               freeMarkAcrossCoda: freeMarkAcrossCoda,
+                               committing: committing)
                 if literalAfterCancel && effect == .literal { cancelled = true }
             }
             prevChar = lo
@@ -101,7 +102,8 @@ enum Telex {
         quickStartConsonant: Bool = false,
         quickEndConsonant: Bool = false,
         allowFreeToneMark: Bool = true,
-        freeMarkAcrossCoda: Bool = false
+        freeMarkAcrossCoda: Bool = false,
+        committing: Bool = false
     ) -> Effect {
 
         // 0. Start-consonant shortcut (Telex "gõ tắt phụ âm đầu"), onset only.
@@ -302,16 +304,27 @@ enum Telex {
                 }
             }
 
-            // `freeMarkAcrossCoda` (opt-in, default off) fallback: the search
-            // above only looks within the trailing (uninterrupted) vowel run
-            // and found nothing. Now search back across ALL cells — crossing
-            // a consonant coda on purpose — for the last vowel with the same
-            // base and no mark yet, genuinely across a coda (there is at
-            // least one consonant between it and the buffer end; otherwise
-            // it would already have been found above, so this never
-            // overlaps that within-nucleus path). This is what makes
-            // `trene`→trên possible, at the accepted cost of `mama`→mâm.
-            if ei == nil, canCirc, freeMarkAcrossCoda {
+            // `freeMarkAcrossCoda` (opt-in) fallback: the search above only
+            // looks within the trailing (uninterrupted) vowel run and found
+            // nothing. Now search back across ALL cells — crossing a consonant
+            // coda on purpose — for the last vowel with the same base and no
+            // mark yet, genuinely across a coda (there is at least one
+            // consonant between it and the buffer end; otherwise it would
+            // already have been found above, so this never overlaps that
+            // within-nucleus path). This is what makes `trene`→trên possible.
+            //
+            // DEFERRED TO COMMIT (`committing`): this across-coda circumflex is
+            // applied ONLY at the word boundary (`Engine.finalize`), never in
+            // the per-keystroke `Engine.rerender` (which passes committing =
+            // false). "tana" and "trene" therefore stay literal WHILE typing
+            // and become "tân"/"trên" only when the syllable is committed — so
+            // an English word passing through the same V-C-V shape (`manager`)
+            // never flashes pseudo-Vietnamese ("mân"/"mâng") mid-word: at
+            // commit it folds to "mânger", fails validity, and reverts to raw.
+            // The within-nucleus circumflex (aa→â, treen→trên) and the đ-stroke
+            // both stay eager — only this across-coda vowel mark waits.
+            // See DECISIONS.md "Deferred across-coda circumflex (smooth typing)".
+            if ei == nil, canCirc, freeMarkAcrossCoda, committing {
                 var acrossCoda: Int? = nil
                 for i in cells.indices.reversed() {
                     guard cells[i].isVowel, cells[i].base == bv, cells[i].mark == .none else { continue }
