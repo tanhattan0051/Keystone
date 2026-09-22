@@ -42,6 +42,12 @@ public final class EngineController: @unchecked Sendable {
         lock.withLock { engine.lexicon = lexicon }
     }
 
+    /// Installs (or clears) the force-English whitelist `Engine.finalize` consults
+    /// when `spellCheck` is on. Under the same lock as every engine mutation.
+    public func setForceEnglish(_ lexicon: Lexicon?) {
+        lock.withLock { engine.forceEnglish = lexicon }
+    }
+
     /// Returns (suppress original event?, edit to execute or nil, decision).
     public func handle(_ k: RawKey) -> (suppress: Bool, edit: EngineResult?, decision: KeyDecision) {
         lock.withLock {

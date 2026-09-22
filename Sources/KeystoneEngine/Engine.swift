@@ -44,6 +44,13 @@ public final class Engine {
     /// behind its own `useLexicon` kill switch (see `AppModel`).
     public var lexicon: Lexicon?
 
+    /// Curated force-English whitelist (see SupplementaryWords.forceEnglishWords
+    /// and DECISIONS.md "Force-English whitelist (Lớp B)"). When `config.spellCheck`
+    /// is on, `finalize` commits the raw English for a word in this list even when
+    /// its Vietnamese composition is perfectly valid. Set independently of
+    /// `EngineConfig` (like `lexicon`) via `EngineController.setForceEnglish`.
+    public var forceEnglish: Lexicon?
+
     public init(config: EngineConfig) {
         self.config = config
         self.macroTable = MacroTable(config.macros)
@@ -282,15 +289,44 @@ public final class Engine {
         // protecting via revert-to-raw. See DECISIONS.md "Restore-if-invalid:
         // two layers".
         let compHasVowel = comp.cells.contains { $0.isVowel }
+        // Collapse the "doubled-w" habit (ww = one literal w) up front: in
+        // Telex `w` is always the ư/horn key, so a "ww" pair is always an
+        // escape to a single `w` (the fold already collapses a bare "ww" →
+        // "w"). This makes an English word typed with doubled w's revert
+        // cleanly — "wwin" → "win", "swwim" → "swim" — while words without a
+        // "ww" pair (boss, wrong) are untouched. Shared by both the
+        // force-English and restore-if-invalid branches below, and by
+        // `revertToRawUnits`.
+        let collapsedRawKeys = Engine.collapseDoubledW(rawKeys)
+        let rawWord = String(collapsedRawKeys)
+        // The composed word is rendered through the UNICODE table regardless
+        // of the active code table (a legacy table's ASCII bytes are
+        // identical anyway, and this keeps the comparison stable), taken
+        // BEFORE capitalization — capitalization is applied after the
+        // decision, to whichever branch wins. Shared by both branches below.
+        let unicodeTable = outputTable(for: .unicode)
+        let composedWordU = unicodeTable.decode(encode(comp, table: unicodeTable))
+        // Reverts to the (w-collapsed) raw keystrokes, capitalizing the first
+        // one if the word starts a sentence — shared by both branches below.
+        func revertToRawUnits() -> [UInt16] {
+            var keys = collapsedRawKeys
+            if shouldCapitalize, let first = keys.first {
+                keys[0] = Character(first.uppercased())
+            }
+            return keys.flatMap { table.plain($0) }
+        }
         let finalUnits: [UInt16]
-        if config.restoreIfInvalid && !rawKeys.isEmpty && !isValid(comp) && compHasVowel {
-            // Collapse the "doubled-w" habit (ww = one literal w) before
-            // reverting: in Telex `w` is always the ư/horn key, so a "ww" pair
-            // is always an escape to a single `w` (the fold already collapses a
-            // bare "ww" → "w"). This makes an English word typed with doubled
-            // w's revert cleanly — "wwin" → "win", "swwim" → "swim" — while
-            // words without a "ww" pair (boss, wrong) are untouched.
-            let collapsedRawKeys = Engine.collapseDoubledW(rawKeys)
+        if config.spellCheck, !rawKeys.isEmpty, let fe = forceEnglish,
+           rawWord.lowercased() != composedWordU.lowercased(),
+           fe.contains(rawWord) {
+            // Force-English whitelist (Lớp B): the just-typed word composes a
+            // VALID Vietnamese syllable (so restore-if-invalid below would
+            // never fire for it), but it's a curated English word that must
+            // win over that Vietnamese homograph anyway — see DECISIONS.md
+            // "Force-English whitelist (Lớp B)". Checked first so it wins
+            // over both other branches.
+            finalUnits = revertToRawUnits()
+        } else if config.restoreIfInvalid && !rawKeys.isEmpty && !isValid(comp) && compHasVowel {
             // Standard Telex tone-CANCEL habit: the user presses the same
             // tone/mark key again once the intended word is showing, so the
             // RAW keystrokes (about to be restored below) include that
@@ -298,23 +334,10 @@ public final class Engine {
             // `RestoreDecision` picks the COMPOSED word instead when it is
             // the real one and the raw spelling isn't — see DECISIONS.md
             // "Restore chooses the composed word when it is the real one".
-            // The composed side of the comparison is rendered through the
-            // UNICODE table regardless of the active code table (a legacy
-            // table's ASCII bytes are identical anyway, and this keeps the
-            // comparison stable), and both strings are taken BEFORE
-            // capitalization — capitalization is applied after the choice,
-            // to whichever branch wins.
-            let unicodeTable = outputTable(for: .unicode)
-            let composedWord = unicodeTable.decode(encode(comp, table: unicodeTable))
-            let rawWord = String(collapsedRawKeys)
-            if RestoreDecision.choose(composed: composedWord, raw: rawWord, lexicon: lexicon) == .composed {
+            if RestoreDecision.choose(composed: composedWordU, raw: rawWord, lexicon: lexicon) == .composed {
                 finalUnits = encode(capitalized(comp, if: shouldCapitalize), table: table)
             } else {
-                var keys = collapsedRawKeys
-                if shouldCapitalize, let first = keys.first {
-                    keys[0] = Character(first.uppercased())
-                }
-                finalUnits = keys.flatMap { table.plain($0) }   // revert to (w-collapsed) raw keystrokes
+                finalUnits = revertToRawUnits()
             }
         } else {
             finalUnits = encode(capitalized(comp, if: shouldCapitalize), table: table)

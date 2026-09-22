@@ -1680,3 +1680,91 @@ proves this three ways, all with ZERO tolerated divergence (no allowlist):
 `AppModel.spellCheck` (already-persisted scaffolding, Control Panel "Kiểm
 tra chính tả") defaults `true` and is now pushed through `pushConfig()`/
 `resetToDefaults()` like every other mapped toggle.
+
+## Force-English whitelist (Lớp B)
+
+Eager restore and restore-if-invalid (both above) both handle the same class
+of problem: an English word Telex-composes into something that ISN'T a legal
+Vietnamese syllable, so it can safely revert to raw keystrokes — `docker`
+composes to the dead `dỏcke`, `task` to the invalid `ták`. But a second,
+disjoint class of English word exists that neither of those features can ever
+touch: one whose Telex keystrokes compose a syllable that IS phonologically
+legal Vietnamese. `test`→`tét`, `reset`→`rết`, `six`→`sĩ`, `box`→`bõ`,
+`row`→`rơ` are all valid Vietnamese syllables, so `isValid` says yes,
+`isUnrecoverable` says "never dead", and the word stays Vietnamese all the
+way to commit — today, with no code change, that's actually correct: nothing
+in the composed text signals it should have been English at all. The
+keystrokes are, genuinely, ambiguous between "an English word" and "a
+Vietnamese syllable" — that ambiguity is the entire problem this feature
+solves, not something the previous two features overlooked.
+
+**Why not just "prefer English when the composition also happens to be a
+real English word"?** That was the obvious first design and it's wrong: the
+same Telex shape that makes `test`/`reset`/`six` look like English also makes
+extremely common Vietnamese words look like English. `car`→`cả`, `cow`→`cơ`,
+`bee`→`bê`, `bus`→`bú` are everyday Vietnamese words the user types
+constantly, and `car`/`cow`/`bee`/`bus` are all real English words too — a
+blanket rule would silently break Vietnamese typing far more often than it
+would fix English typing. There is no phonological, lexical, or statistical
+signal inside the keystrokes themselves that reliably tells `test` (should
+win as English) apart from `car` (should lose to Vietnamese) — both are
+"real English word whose Telex composition is a valid Vietnamese syllable."
+The only honest way to resolve the ambiguity is a human, per-word judgment
+call about which reading is more likely in practice — hence a CURATED list,
+not a rule.
+
+**The tradeoff, stated plainly.** Every entry in
+`SupplementaryWords.forceEnglishWords` is a deliberate decision to SHADOW a
+Vietnamese homograph: typing `test`/`reset`/`row`/`box`/`six`/`refer`/`defer`
+in actual Vietnamese prose (rare, but not impossible) will now render the
+English word instead. This is only acceptable because each entry was chosen
+for having English usage that vastly outweighs its Vietnamese collision in
+realistic typing (a hosting/dev-heavy vocabulary, same audience as
+`SupplementaryWords.all`) — this is not a knob to turn up casually. A
+candidate word only belongs on the list if it's a genuine "Lớp B" collision
+in the first place: something that ALREADY composes to a different, valid
+Vietnamese syllable with `spellCheck`/`forceEnglish` both absent (a word that
+already renders as itself needs no override; a word that reverts via
+ordinary restore-if-invalid already loses to Vietnamese for a different
+reason and doesn't need this mechanism either). `ForceEnglishListIntegrity`'s
+`everyEntryIsAGenuineVietnameseHomographCollision` test enforces exactly
+this, so the list can't silently accumulate dead weight.
+
+**Mechanism: gated under `spellCheck`, decided in `finalize`, wins over
+everything else.** Unlike eager restore (which hooks `rerender`, mid-word),
+the force-English check runs once, at the word boundary, in
+`Engine.finalize` — there is nothing to decide until the whole word is known,
+since a prefix of `test` (e.g. `te`) isn't itself in the whitelist and isn't
+dead either. It reuses `finalize`'s existing raw-word/composed-word/
+`revertToRawUnits` machinery (hoisted to the top of the function so both this
+branch and the pre-existing restore-if-invalid branch share one copy) and is
+checked FIRST, before restore-if-invalid: `config.spellCheck` must be on,
+`Engine.forceEnglish` (an optional `Lexicon`, set independently of
+`EngineConfig` exactly like `Engine.lexicon` — see that property's own doc
+comment for why: `EngineConfig` is `Codable` and rebuilt from scratch on
+every unrelated settings change) must be installed and contain the raw typed
+word, and the raw and composed spellings must actually differ (guards
+against a no-op "win" when raw already equals composed). When all of that
+holds, `finalize` commits the raw keystrokes exactly the way
+restore-if-invalid's revert branch always has — same `collapseDoubledW`,
+same auto-capitalize-preserving `revertToRawUnits`. A word not on the list is
+completely untouched: it falls through to the existing restore-if-invalid
+check and, since it composed a VALID syllable, on to the ordinary composed-
+output path — byte-identical to before this feature existed.
+
+**Independent of the lexicon-driven restore feature.** `RestoreDecision`
+(the ~236k-word system dictionary used by restore-if-invalid, see "Restore
+chooses the composed word when it is the real one") never even runs for
+these words — their composition is valid, so `!isValid(comp)` is false and
+that whole branch is skipped. `forceEnglish` is a separate, tiny (~7-word),
+always-resident `Lexicon` (unlike the 236k-entry system dictionary, no
+lazy/off-thread loading is warranted) installed via
+`EngineController.setForceEnglish`, mirroring `setLexicon`'s pattern but
+gated only by `spellCheck` (`AppModel.updateForceEnglishLoaded`, called from
+`init()` and `spellCheck`'s `didSet`) rather than by two flags.
+
+**Ship-dormant discipline maintained.** `Engine.forceEnglish` defaults `nil`
+exactly like `Engine.lexicon`, so no existing test or corpus fixture is
+affected until something installs it — proven by full-suite regression
+(`LexiconRestoreTests`, `LiteralRestoreTests`, `LiteralAfterCancelTests`,
+`EagerRestoreTests`, and the whole corpus suite are all unchanged).

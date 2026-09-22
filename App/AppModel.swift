@@ -215,6 +215,7 @@ final class AppModel {
         didSet {
             UserDefaults.standard.set(spellCheck, forKey: Keys.spellCheck)
             pushConfig()
+            updateForceEnglishLoaded()
         }
     }
 
@@ -488,6 +489,7 @@ final class AppModel {
         tap = EventTapController(engine: controller)
         pushConfig()   // push whatever was loaded from UserDefaults above
         updateLexiconLoaded()
+        updateForceEnglishLoaded()
     }
 
     /// A monotonically increasing tag for the most recently REQUESTED
@@ -527,6 +529,11 @@ final class AppModel {
                 controller.setLexicon(lexicon)
             }
         }
+    }
+
+    /// The force-English whitelist is resident only while `spellCheck` is on.
+    private func updateForceEnglishLoaded() {
+        controller.setForceEnglish(spellCheck ? Lexicon(SupplementaryWords.forceEnglishWords) : nil)
     }
 
     func bootstrap() {

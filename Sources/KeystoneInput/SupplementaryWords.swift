@@ -6,8 +6,11 @@
 // consults by `LexiconLoader`. See DECISIONS.md "Restore chooses the
 // composed word when it is the real one".
 //
-// Two SEPARATE lists, both merged into the lexicon by `LexiconLoader`, doing
-// two different jobs:
+// Three SEPARATE lists doing three different jobs. `all` and
+// `protectedRealWords` are merged into the lexicon by `LexiconLoader`;
+// `forceEnglishWords` is a DIFFERENT, standalone list installed onto
+// `Engine.forceEnglish` (via `EngineController.setForceEnglish`), not merged
+// into the lexicon at all:
 //   - `all`          — modern words the 1934 list never had a chance to
 //                       include, so the COMPOSED (cancel-habit) spelling of
 //                       one of them is recognized as a word (`gooogle`→
@@ -17,6 +20,13 @@
 //                       *raw* natural typing must be recognized so it beats a
 //                       coincidentally-real COMPOSED collapse. See that
 //                       list's own header below.
+//   - `forceEnglishWords` — a curated whitelist (Lớp B) of English words that
+//                       already compose a VALID Vietnamese syllable (so they
+//                       never reach the lexicon/restore machinery above at
+//                       all) and must win over that Vietnamese homograph
+//                       anyway — `test`→tét, `reset`→rết. See that list's own
+//                       header below and DECISIONS.md "Force-English
+//                       whitelist (Lớp B)".
 //
 // A word with no vowel is never added to either list: `Engine.finalize` only
 // enters the restore/lexicon branch when the composition has a vowel cell
@@ -197,5 +207,19 @@ public enum SupplementaryWords {
         "transsonic", "hassidic", "hassidim", "chassidim", "mycorrhiza", "degass",
         "unbiassed", "aaa", "iss", "poisson", "cassava", "cassaba", "hassan",
         "parramatta", "oss", "herr", "kerr", "orr", "starr", "barr", "neff", "foxx", "maxx",
+    ]
+
+    /// Force-English whitelist (Lớp B): English words whose Telex keystrokes ALSO
+    /// spell a VALID Vietnamese syllable (so `restoreIfInvalid` never reverts them
+    /// and they stay Vietnamese today: `test`→tét, `reset`→rết, `row`→rơ, …).
+    /// When `spellCheck` is on, `Engine.finalize` commits the raw English for a
+    /// word in this list instead of the Vietnamese homograph. Each entry is a
+    /// deliberate choice to SHADOW its Vietnamese collision, so keep it to words
+    /// whose English use vastly outweighs the (usually rare) Vietnamese word, and
+    /// only real Lớp B words — a word that already types as itself, or reverts via
+    /// restore-if-invalid, does not belong here. All lowercase, no duplicates,
+    /// disjoint from `all`/`protectedRealWords`.
+    public static let forceEnglishWords: [String] = [
+        "reset", "test", "row", "box", "six", "refer", "defer",
     ]
 }
