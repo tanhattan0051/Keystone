@@ -164,17 +164,19 @@ final class AppModel {
     /// stroke a still-open syllable's onset d (see DECISIONS.md
     /// "Bỏ dấu ở cuối từ / freeMarkAcrossCoda (Phase 4)").
     ///
-    /// Default **ON** (the author's "bỏ dấu ở cuối" input style — `tana`→tân,
-    /// `dadng`→đang): a quality mark (circumflex/horn/breve) may land across a
-    /// consonant coda onto an earlier vowel. Accepted tradeoff: an English/
-    /// informal word with the same V-C-V shape also transforms (`hehe`→hêh,
-    /// `mama`→mâm) — the engine cannot tell it apart from `tana`→tân without a
-    /// dictionary. The clean way to keep BOTH (free-mark style AND `hehe`
-    /// literal) is to re-enable `restoreIfInvalid`, which reverts the invalid
-    /// `hêh` back to raw `hehe`; that path is currently off pending the
-    /// event-tap duplicate-keydown fix (see DECISIONS.md). `EngineConfig`
-    /// still defaults it false so the corpus keeps the English-safe behavior.
-    var freeMarkAcrossCoda: Bool = AppModel.loadBool(Keys.freeMarkAcrossCoda, default: true) {
+    /// Default **OFF** (matches OpenKey, and `EngineConfig`'s own default).
+    /// When on, a quality mark (circumflex/horn/breve) may land across a
+    /// consonant coda onto an earlier vowel (`trene`→trên, `dadng`→đang) — a
+    /// niche "bỏ dấu ở cuối" style. The problem: an English word with the same
+    /// V-C-V shape transforms the same way MID-WORD (`manager` flashes
+    /// `mân`→`mâng`, `mama`→mâm) — `restoreIfInvalid`/`spellCheck` still land
+    /// the correct final word, but the transient Vietnamese flash confuses the
+    /// typist (reported for `manager`/`manage`/`damage`). Tone marks across a
+    /// coda are UNAFFECTED — those ride `allowFreeToneMark` (`toán`, `cám`,
+    /// `hành` still work). With this off, a quality mark must be typed adjacent
+    /// (`treen`→trên, `maam`→mâm), the normal style. Users who want the
+    /// free-mark style can turn it back on in the Control Panel.
+    var freeMarkAcrossCoda: Bool = AppModel.loadBool(Keys.freeMarkAcrossCoda, default: false) {
         didSet {
             UserDefaults.standard.set(freeMarkAcrossCoda, forKey: Keys.freeMarkAcrossCoda)
             pushConfig()
@@ -689,7 +691,7 @@ final class AppModel {
 
         spellCheck = true
         allowFreeToneMark = true
-        freeMarkAcrossCoda = true
+        freeMarkAcrossCoda = false
         literalAfterCancel = true
         autoCapitalize = false
         quickStartConsonant = false

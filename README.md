@@ -103,9 +103,11 @@ Cùng với **self-tag** chống xử lý lại chính event mình sinh ra, **kh
   xoá một ký tự dấu rồi gõ lại luôn đúng. Có cả **double-strike undo** (gõ lại phím thanh lần hai để
   bỏ dấu và trả ra ký tự thô).
 - **Bỏ dấu tự do** *(mặc định bật):* đặt dấu không cần liền kề chữ — ví dụ `roiof → rồi`.
-- **Bỏ dấu cuối từ** *(mặc định bật):* cho dấu vượt qua cả phụ âm cuối — `trene → trên`,
-  `dadng → đang`. Đánh đổi có chủ đích: vài từ tiếng Anh (`mama`, `dad`) có thể bị hiểu thành tiếng
-  Việt (có cảnh báo trong Bảng điều khiển).
+- **Bỏ dấu cuối từ** *(mặc định TẮT — giống OpenKey):* cho **dấu mũ** (â/ê/ô/ơ/ư/ă) vượt qua cả phụ
+  âm cuối — `trene → trên`, `dadng → đang`. Mặc định tắt vì cùng cơ chế đó làm từ tiếng Anh nháy qua
+  tiếng Việt giữa chừng (`manager` nháy `mân`/`mâng`, `mama → mâm`) gây rối cho người gõ, dù kết quả
+  cuối vẫn đúng. Tắt thì gõ dấu mũ phải liền (`treen → trên`) — kiểu thông thường; **dấu thanh cuối
+  từ vẫn chạy** (`toán`, `cám`, `hành`). Bật lại trong Bảng điều khiển nếu muốn kiểu bỏ dấu tách rời.
 - **Tự viết hoa đầu câu** *(mặc định tắt).*
 
 ### Gõ tắt & macro
