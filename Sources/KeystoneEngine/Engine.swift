@@ -234,7 +234,7 @@ public final class Engine {
             // raw-rendering `finalize`'s revert-to-raw branch uses, so there
             // is no visual jump when the word boundary is eventually reached
             // (see DECISIONS.md "Eager restore (spellCheck / Phase 7)").
-            newUnits = Engine.collapseDoubledW(rawKeys).flatMap { table.plain($0) }
+            newUnits = Engine.collapseDoubledLiterals(rawKeys).flatMap { table.plain($0) }
         } else {
             newUnits = encode(comp, table: table)
         }
@@ -304,7 +304,7 @@ public final class Engine {
         // "ww" pair (boss, wrong) are untouched. Shared by both the
         // force-English and restore-if-invalid branches below, and by
         // `revertToRawUnits`.
-        let collapsedRawKeys = Engine.collapseDoubledW(rawKeys)
+        let collapsedRawKeys = Engine.collapseDoubledLiterals(rawKeys)
         let rawWord = String(collapsedRawKeys)
         // The composed word is rendered through the UNICODE table regardless
         // of the active code table (a legacy table's ASCII bytes are
@@ -369,21 +369,39 @@ public final class Engine {
         }
     }
 
-    /// Collapse each consecutive "ww" pair to a single "w" (case of the first
-    /// is kept). Used only when reverting an invalid word to raw keystrokes —
-    /// see `finalize`. In Telex the `w` key is always the ư/horn transform, so
-    /// a "ww" is always the escape for one literal `w`; collapsing it here lets
-    /// an English word typed with the common doubled-w habit ("wwin", "swwim")
-    /// revert to "win"/"swim" instead of keeping both w's.
-    private static func collapseDoubledW(_ keys: [Character]) -> [Character] {
+    /// Collapse the two Telex "type the transform key extra to get a literal"
+    /// escapes, so reverting an invalid word to its raw keystrokes yields the
+    /// literal the user actually meant (see `finalize`'s revert-to-raw branch
+    /// and `rerender`'s eager restore):
+    ///
+    ///   - `ww` → `w`: `w` is always the ư/horn transform, so a doubled `w` is
+    ///     the escape for one literal `w` — "wwin"/"swwim" revert to "win"/"swim".
+    ///   - `ddd` → `dd`: `dd` is the đ transform, so a THIRD `d` undoes the đ and
+    ///     leaves two literal `d`s. An English/tech word whose literal starts
+    ///     "dd" is therefore typed with a leading "ddd" (its only route, since
+    ///     bare "ddos" is the common word "đó" — identical keystrokes). Dropping
+    ///     the escape d here reverts "dddos"→"ddos", "dddong"→"ddong". A plain
+    ///     "dd" pair (English "add", "buddy") is NOT touched — only a run of
+    ///     three. See DECISIONS.md "The ddd→dd escape in raw-restore".
+    ///
+    /// Case of the kept character(s) is preserved.
+    private static func collapseDoubledLiterals(_ keys: [Character]) -> [Character] {
+        func isD(_ c: Character) -> Bool { c == "d" || c == "D" }
+        func isW(_ c: Character) -> Bool { c == "w" || c == "W" }
         var out: [Character] = []
         var i = 0
         while i < keys.count {
             let ch = keys[i]
+            // "ddd" → keep two d's, drop the third (the đ-escape).
+            if isD(ch), i + 2 < keys.count, isD(keys[i + 1]), isD(keys[i + 2]) {
+                out.append(ch); out.append(keys[i + 1])
+                i += 3
+                continue
+            }
             out.append(ch)
-            if ch == "w" || ch == "W",
-               i + 1 < keys.count, keys[i + 1] == "w" || keys[i + 1] == "W" {
-                i += 2   // keep this w, drop the paired second w
+            // "ww" → keep one w, drop the paired second (the horn escape).
+            if isW(ch), i + 1 < keys.count, isW(keys[i + 1]) {
+                i += 2
                 continue
             }
             i += 1

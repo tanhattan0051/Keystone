@@ -1802,3 +1802,24 @@ instantly; in exchange there is never a wrong mid-word flash, so typing reads
 as smooth (and strictly cleaner than OpenKey, which leaves `mânger`). Pinned by
 `DeferredCircumflexTests.swift`; every existing test (which asserts committed
 output) is unchanged, since commit behavior is identical.
+
+## The ddd→dd escape in raw-restore
+
+`dd`→đ is the Telex đ transform, so to type two LITERAL `d`s you press three:
+`ddd` (the third d undoes the đ and leaves "dd" — see `Telex.apply`'s d branch
+and `literalAfterCancel`). This matters because a word that should start with a
+literal "dd" has no other route: bare `ddos` is the extremely common Vietnamese
+word `đó` (`dd`+`o`+`s`→sắc — identical keystrokes), so we can NOT force it to
+English without breaking `đó` (same class as `six`↔`sĩ`, see "Force-English
+whitelist"). The user types `dddos` to mean "ddos" (e.g. DDoS).
+
+The bug: `finalize`'s revert-to-raw and `rerender`'s eager restore both render
+the RAW keystrokes for the (invalid, onset "dd") composition, and the raw
+"dddos" still has the escape d, so it showed "dddos" instead of "ddos". Fix:
+`collapseDoubledLiterals` (renamed from `collapseDoubledW`) now collapses a run
+of three d's to two — `ddd`→`dd` — exactly as it already collapses the horn
+escape `ww`→`w`. A plain `dd` pair (English "add", "buddy") is a run of two,
+untouched; a tone-key double ("boss") never involves d at all. So `dddos`→`ddos`,
+`dddong`→`ddong`, while every existing restore is unchanged. Pinned by
+`DStrokeEscapeTests.swift`. (`ddos` typed with two d's still composes to `đó` —
+that homograph is inherent and unchanged.)
