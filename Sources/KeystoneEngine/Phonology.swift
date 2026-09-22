@@ -88,6 +88,20 @@ enum Phonology {
         return nuclei.contains { $0.hasPrefix(s) }
     }
 
+    // MARK: Prefix checks for eager restore (spellCheck / Phase 7)
+
+    /// Is `s` the start of (or a whole) legal onset? (mirrors isNucleusPrefix)
+    static func isOnsetPrefix(_ s: String) -> Bool {
+        if s.isEmpty { return true }
+        return onsets.contains { $0.hasPrefix(s) }
+    }
+
+    /// Is `s` the start of (or a whole) legal consonant coda?
+    static func isCodaPrefix(_ s: String) -> Bool {
+        if s.isEmpty { return true }
+        return codas.contains { $0.hasPrefix(s) }
+    }
+
     // MARK: Nucleus × coda legality (§5.3)
 
     /// Nuclei that end in a semivowel offglide and therefore CANNOT take a true

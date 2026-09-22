@@ -1541,3 +1541,142 @@ three consecutive Telex-special letters (`bossship`, `whenceeer`, …) still
 commit identically either way, because the flag only ever changes the
 COMPOSED intermediate shape, and both paths converge on the same final
 lexicon-restore decision.
+
+## Eager restore (spellCheck / Phase 7)
+
+"Kiểm tra chính tả" shipped as dormant scaffolding (persisted, shown in the
+Control Panel, but not wired to `EngineConfig`) since Phase 4. This phase
+wires it to a new engine behavior: EAGER RESTORE. Typing an English word like
+`docker` inside Vietnamese Telex mode used to "flash" pseudo-Vietnamese
+(`d`, `do`, `doc`, `dock`, `dỏcke`) until Space, where the EXISTING
+`restoreIfInvalid` (see "Restore-if-invalid: two layers" above) reverts it to
+`docker` — correct at the boundary, but visually noisy while typing. `Engine`
+already re-derives the whole word from `rawKeys` on every keystroke
+(`rerender`, see this file's header), so nothing stops the SAME kind of
+revert from firing earlier, character by character, once the outcome is
+already certain — that's `spellCheck`/`EngineConfig.spellCheck`.
+
+**Dead vs. merely invalid — the reason `isValid` couldn't be reused as-is.**
+`Engine.isValid` (used by `finalize`'s restore-if-invalid) answers "is this
+syllable legal RIGHT NOW" — and a huge fraction of real Vietnamese words are
+*not* legal right now at every prefix. Typing `một` Telex-style
+(`m-o-o-t-j`) passes through `mo`, `môt` (circumflex applied, but the stop
+coda `t` has tone ngang — illegal per `Phonology.toneAllowed`) before the
+final `j` supplies nặng and it becomes legal. Firing `restoreIfInvalid`'s
+revert at the `môt` step would flash `moot` (raw keys) mid-word for a
+completely normal, correctly-typed Vietnamese word — unacceptable. A manual
+survey of the corpus and the tricky-word list found roughly one in eight
+words (`môt`→một, `ngươ`→người, `tâp`→tập, and the ~20 more in
+`EagerRestoreVietnameseUnaffectedTests`) pass through at least one
+"currently invalid" intermediate state that later recovers. So eager restore
+needs a STRICTER predicate than `isValid`: not "is this legal now" but "can
+this EVER become legal again" — `Engine`'s new private
+`isUnrecoverable(_:)`, sitting right next to `isValid`. Only a truly DEAD
+composition — structurally incapable of becoming a legal syllable no matter
+what is typed next — may trigger the early revert.
+
+**A no-vowel composition is never dead — the guard before the four
+conditions.** `isUnrecoverable` first returns `false` for any composition
+with no vowel at all, mirroring `finalize`'s own restore branch (which is
+also `&& compHasVowel`, see "Restore-if-invalid: two layers"). A vowel-less
+composition is either a still-pending onset (`đ` from `dd` before its vowel)
+or a DELIBERATE Telex double-strike literal (`ww`→`w`, `ddd`→`dd`) that the
+engine keeps as composed — never a "dead English word." Without this guard,
+eager restore would rewrite those escapes back to their raw keystrokes
+(`dd`→`ddd`) mid-word. English consonant clusters (`vm`, `cl`, `st`) are
+caught one keystroke later, at their first vowel, so coverage is unchanged.
+
+**The four dead conditions** (see `Engine.isUnrecoverable`, reusing the
+existing private `parse(_:)` plus two new `Phonology` prefix helpers,
+`isOnsetPrefix`/`isCodaPrefix`, mirroring the existing `isNucleusPrefix`):
+
+1. **A vowel typed after the coda region** (`p.trailingVowelAfterCoda`) — a
+   syllable's shape is onset–nucleus–coda in that order; once a consonant
+   coda has started, a LATER vowel cannot be un-typed into an earlier
+   position. Unrepairable by construction.
+2. **An onset that is neither legal nor the prefix of any legal onset**
+   (`vm`, `cl`, `br`, `st`, …). Every legal onset and every prefix of one
+   (`c`, `ch`, `t`, `th`, `tr`, …) is explicitly excluded — recoverable
+   onsets keep composing.
+3. **A coda that is neither legal nor the prefix of any legal coda** (`ck`,
+   `g`, `d`, `s`, `x`, `b`, …). Vietnamese has exactly eight consonant codas
+   (`c ch m n ng nh p t`); anything else, and anything that can't grow into
+   one of them, is dead.
+4. **An offglide-final nucleus already closed by a consonant coda** — nuclei
+   like `ai`, `oi`, `ươi`, `iêu` end in a semivowel offglide and can never
+   take a true consonant coda (`Phonology.isLegalRime`, the same rule that
+   already protects `coins`/`ruins`/`rains` from restore-if-invalid). Once
+   such a nucleus is closed by a coda consonant, more typing only lengthens
+   that coda — never fixes it.
+
+**Two conditions deliberately left OUT, on purpose:**
+
+- **`toneAllowed`** (a stop coda `p/t/c/ch` without its required sắc/nặng
+  tone — exactly the `một`/`môt` shape above) is NOT a dead condition: the
+  tone key is the repair, and it always arrives eventually in normal typing.
+  Excluding it is precisely what keeps `một`/`người`/`tập`-shaped words from
+  false-triggering the corpus safety sweep below.
+- **Nucleus legality** (`Phonology.isLegalNucleus`) is NOT a dead condition
+  either: an intermediate plain nucleus like `uo` (before the second `o`
+  arrives and folds `oo`→ô in `muốn`) is a completely normal recoverable
+  mid-word shape, not a dead one. A "safe" version of this check (one that
+  never false-positives on any real recoverable nucleus) would have to be so
+  narrow it catches almost nothing not already caught by conditions 1-4 —
+  not worth the added surface area for the risk of a false positive.
+
+**Where it hooks in: `rerender`, not `finalize`.** `finalize`'s
+restore-if-invalid only ever runs at the word boundary; `spellCheck`'s
+eager version runs on every keystroke, in `Engine.rerender`:
+
+```swift
+let comp = interpret(rawKeys)
+let table = outputTable(for: config.codeTable)
+let newUnits: [UInt16]
+if config.spellCheck && isUnrecoverable(comp) {
+    newUnits = Engine.collapseDoubledW(rawKeys).flatMap { table.plain($0) }
+} else {
+    newUnits = encode(comp, table: table)
+}
+```
+
+This renders the SAME way `finalize`'s revert-to-raw branch does — raw
+`rawKeys`, `collapseDoubledW`'d, through `table.plain` — so there is no
+visual jump between the eager mid-word restore and the eventual word-
+boundary commit: once a word goes dead, it stays showing its raw keystrokes
+verbatim for the rest of that word (backspacing past the dead keystroke
+naturally un-restores it too, since `rerender` always re-folds the whole of
+`rawKeys` from scratch — no separate state to unwind, same as
+`literalAfterCancel`'s `cancelled` local).
+
+**The safety guarantee, and how it's proven.** The hard requirement: with
+`spellCheck` on, every REAL Vietnamese word renders byte-identical —
+stepwise AND at the boundary — to `spellCheck` off. `EagerRestoreTests.swift`
+proves this three ways, all with ZERO tolerated divergence (no allowlist):
+
+1. A 69-word hardcoded list built around the 21 known tricky recoverable-
+   intermediate shapes (`một`, `người`, `tập`, and friends): stepwise and
+   final identical on vs. off.
+2. `corpusVietnameseStepwiseIdenticalOnAndOff` — a by-construction sweep of
+   every telex single-word case across the ENTIRE pinned corpus (`words`,
+   `words2`, `diacritics`, `placement`, `positional`, `tones`, `quicktelex`)
+   whose `expected` is an actual Vietnamese word (carries a non-ASCII
+   scalar — `đ` or a toned/quality-marked vowel), each run in ITS OWN config
+   with only `spellCheck` toggled: the full per-keystroke trace must match.
+   Running each fixture in its own config is what keeps the `quickTelex`
+   fixtures (`saccs`→`sách`, `ccaf`→`chà`, `ttoo`→`thô`) honest — with
+   `quickTelex` on, their doubled consonant folds into a legal digraph coda,
+   so they are never dead and never diverge.
+3. `corpusFinalOutputIdenticalOnAndOff` — the universal invariant that pins
+   why this feature is inherently safe at commit: `finalize` NEVER reads
+   `spellCheck`, so the word-boundary output is identical on vs. off for
+   EVERY fixture, Vietnamese or not (including the `ddd`→`dd` / `ass`→`as`
+   double-strike escapes, whose ASCII-only `expected` excludes them from the
+   stepwise gate above — eager restore may change how they LOOK mid-word, but
+   never what commits).
+
+**Dormant-at-engine / on-by-default-in-the-app**, the same pattern as
+`literalAfterCancel`/`freeMarkAcrossCoda`: `EngineConfig.spellCheck` defaults
+`false` so every existing test and the whole corpus stay byte-identical;
+`AppModel.spellCheck` (already-persisted scaffolding, Control Panel "Kiểm
+tra chính tả") defaults `true` and is now pushed through `pushConfig()`/
+`resetToDefaults()` like every other mapped toggle.

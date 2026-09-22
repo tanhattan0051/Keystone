@@ -166,6 +166,21 @@ public struct EngineConfig: Sendable, Equatable, Codable {
     /// the SAME word after a cancel are affected — everything before the
     /// cancel is unchanged either way.
     public var literalAfterCancel: Bool
+    /// "Kiểm tra chính tả" (Phase 7, eager restore). Off by default. When
+    /// true, `Engine.rerender` (per-keystroke, WHILE the word is still being
+    /// typed) renders the raw keystrokes literally as soon as the composing
+    /// word becomes a Vietnamese syllable that is DEAD — structurally unable
+    /// to ever become legal no matter what is typed next (see `Engine`'s
+    /// private `isUnrecoverable(_:)`, right next to `isValid(_:)`). This is a
+    /// STRICTER, EARLIER cousin of `restoreIfInvalid` (which only reverts at
+    /// the word boundary and gates on merely "currently invalid," not
+    /// "dead") — it lets an English word like `docker`/`vmware`/`faster`
+    /// show as itself while typing, instead of flashing pseudo-Vietnamese
+    /// until Space. Default false keeps the corpus and every existing test
+    /// byte-identical; see DECISIONS.md "Eager restore (spellCheck / Phase
+    /// 7)" for the dead-vs-merely-invalid distinction and the safety
+    /// guarantee (every real Vietnamese word renders identically on or off).
+    public var spellCheck: Bool
 
     public init(
         inputMethod: InputMethod = .telex,
@@ -182,7 +197,8 @@ public struct EngineConfig: Sendable, Equatable, Codable {
         autoCapitalize: Bool = false,
         allowFreeToneMark: Bool = true,
         freeMarkAcrossCoda: Bool = false,
-        literalAfterCancel: Bool = false
+        literalAfterCancel: Bool = false,
+        spellCheck: Bool = false
     ) {
         self.inputMethod = inputMethod
         self.codeTable = codeTable
@@ -199,6 +215,7 @@ public struct EngineConfig: Sendable, Equatable, Codable {
         self.allowFreeToneMark = allowFreeToneMark
         self.freeMarkAcrossCoda = freeMarkAcrossCoda
         self.literalAfterCancel = literalAfterCancel
+        self.spellCheck = spellCheck
     }
 }
 

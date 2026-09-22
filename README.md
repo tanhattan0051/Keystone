@@ -85,6 +85,14 @@ Cùng với **self-tag** chống xử lý lại chính event mình sinh ra, **kh
   thường hoàn toàn — không còn lên dấu/thanh hay biến đổi gõ nhanh nữa — cho tới hết từ:
   `classs → class`, `tassk → task`. Công tắc riêng **"Huỷ dấu xong thì gõ tiếp chữ thường (như
   OpenKey)"** trong Bảng điều khiển; xem DECISIONS.md "OpenKey-compatible literal-after-cancel".
+- **Kiểm tra chính tả** *(mặc định bật):* khi từ đang gõ trở thành một âm tiết tiếng Việt "chết" —
+  không cách nào gõ tiếp để thành hợp lệ được nữa (vd phụ âm cuối `ck`, `vm`... không phải phụ âm đầu
+  hay cuối tiếng Việt nào) — chữ thô sẽ hiện ra NGAY khi đang gõ thay vì đợi đến khi gõ dấu cách:
+  `docker`, `vmware`, `faster` hiện đúng ngay từ đầu, không còn nháy qua dạng tiếng Việt trước đó.
+  Chặt chẽ hơn "tự khôi phục phím với từ sai" ở trên (chỉ khôi phục ở dấu cách): những âm tiết *tạm
+  thời* chưa hợp lệ nhưng còn có thể sửa được bằng phím tiếp theo — như `môt` (chờ nặng), `ngươ` (chờ
+  huyền) — không bị đụng tới. Công tắc riêng **"Kiểm tra chính tả"** trong Bảng điều khiển; xem
+  DECISIONS.md "Eager restore (spellCheck / Phase 7)".
 - **Khôi phục dấu qua Backspace:** buffer được dựng lại từ phím thô sau mỗi lần gõ (kể cả xoá), nên
   xoá một ký tự dấu rồi gõ lại luôn đúng. Có cả **double-strike undo** (gõ lại phím thanh lần hai để
   bỏ dấu và trả ra ký tự thô).
@@ -206,8 +214,7 @@ nghiệp vụ tiếng Việt nằm hết ở tầng engine dưới dạng **hàm
 | **5 — macOS 26/27 (Liquid Glass) · ký / notarize / DMG / auto-update** | 🚧 Có script, chờ tài khoản Apple |
 
 **Còn nợ (không chặn):** tách logic riêng cho Simple Telex 1/2 (hiện map về Telex) · chiều chuyển mã
-ngược cho TCVN3 / VNI-Windows · bộ kiểm tra bản mới thật (Sparkle) · `spellCheck` (chờ chốt ngữ nghĩa
-để không trùng `restoreIfInvalid`).
+ngược cho TCVN3 / VNI-Windows · bộ kiểm tra bản mới thật (Sparkle).
 
 ---
 

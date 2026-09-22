@@ -212,7 +212,18 @@ public final class Engine {
     private func rerender() -> EngineResult {
         let comp = interpret(rawKeys)
         let table = outputTable(for: config.codeTable)
-        let newUnits = encode(comp, table: table)
+        let newUnits: [UInt16]
+        if config.spellCheck && isUnrecoverable(comp) {
+            // Eager restore (Phase 7): the composing word can never become a
+            // legal Vietnamese syllable, so render the raw keystrokes
+            // literally NOW instead of waiting for the word boundary — same
+            // raw-rendering `finalize`'s revert-to-raw branch uses, so there
+            // is no visual jump when the word boundary is eventually reached
+            // (see DECISIONS.md "Eager restore (spellCheck / Phase 7)").
+            newUnits = Engine.collapseDoubledW(rawKeys).flatMap { table.plain($0) }
+        } else {
+            newUnits = encode(comp, table: table)
+        }
         let r = diff(prevUnits, newUnits, table: table)
         prevUnits = newUnits
         return r
@@ -479,5 +490,50 @@ public final class Engine {
         guard Phonology.isLegalRime(nucleus: p.nucleusString, coda: p.codaString) else { return false }
         guard Phonology.toneAllowed(comp.tone, coda: p.codaString) else { return false }
         return true
+    }
+
+    /// Eager restore (Phase 7, `config.spellCheck`): is this composition
+    /// DEAD — structurally unable to EVER become a legal Vietnamese syllable
+    /// no matter what is typed next? This is deliberately much STRICTER than
+    /// `isValid` (merely "not currently valid"): every condition below is
+    /// checked to be structurally safe on every prefix of a real Vietnamese
+    /// word — see DECISIONS.md "Eager restore (spellCheck / Phase 7)" for the
+    /// full reasoning and the corpus sweep that proves it.
+    private func isUnrecoverable(_ comp: Composition) -> Bool {
+        let cells = comp.cells
+        if cells.isEmpty { return false }
+        // A composition with NO vowel is never a "dead English word": it is
+        // either a still-pending onset (đ from `dd` before its vowel) or a
+        // DELIBERATE Telex double-strike literal (ww→w, ddd→dd) that
+        // `finalize` keeps as composed rather than reverting — see
+        // DECISIONS.md "Restore-if-invalid: two layers". Mirror that guard
+        // here (finalize's own restore branch is also `&& compHasVowel`) so
+        // eager restore never rewrites those escapes back to raw keystrokes.
+        guard cells.contains(where: { $0.isVowel }) else { return false }
+        let p = parse(cells)
+        // 1) A vowel typed after the coda region — impossible, unrepairable.
+        if p.trailingVowelAfterCoda { return true }
+        // 2) Onset that is neither a legal onset NOR the prefix of any legal onset
+        //    (e.g. "vm", "cl", "br", "st"). Legal single/multi onsets and their
+        //    prefixes are all recoverable.
+        if !p.onsetString.isEmpty,
+           !Phonology.onsets.contains(p.onsetString),
+           !Phonology.isOnsetPrefix(p.onsetString) { return true }
+        // 4) Coda that is neither a legal coda NOR the prefix of any legal coda
+        //    (e.g. "ck", "g", "d", "s", "x", "b"). Legal codas: c ch m n ng nh p t.
+        if !p.codaString.isEmpty,
+           !Phonology.isLegalCoda(p.codaString),
+           !Phonology.isCodaPrefix(p.codaString) { return true }
+        // 5) An offglide-final nucleus already closed by a consonant coda — the rime
+        //    is impossible and more typing only lengthens the coda (coins, rains).
+        if !p.codaString.isEmpty, !p.nucleusString.isEmpty,
+           Phonology.isLegalNucleus(p.nucleusString),
+           !Phonology.isLegalRime(nucleus: p.nucleusString, coda: p.codaString) { return true }
+        // NOTE: a failing toneAllowed (stop coda p/t/c/ch without its sắc/nặng tone,
+        //   e.g. "môt") is DELIBERATELY NOT here — the tone key repairs it.
+        // NOTE: nucleus-legality is deliberately NOT a condition — an intermediate
+        //   plain nucleus like "uo" (before oo→ô in "muốn") is recoverable, and a
+        //   safe base-vowel check catches too little to be worth the risk.
+        return false
     }
 }

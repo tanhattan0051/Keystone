@@ -199,13 +199,26 @@ final class AppModel {
         }
     }
 
-    // MARK: - Scaffolding — persisted, displayed, not yet in EngineConfig
-
-    /// "Kiểm tra chính tả"
-    // TODO: wire to engine — EngineConfig has no spellCheck field yet.
+    /// "Kiểm tra chính tả" (Phase 7, eager restore) — see DECISIONS.md
+    /// "Eager restore (spellCheck / Phase 7)". While typing, as soon as the
+    /// composing word becomes a Vietnamese syllable that can NEVER become
+    /// valid again (dead, not merely "currently invalid" — see `Engine`'s
+    /// private `isUnrecoverable(_:)`), the raw keystrokes render literally
+    /// instead of flashing pseudo-Vietnamese: `docker`/`vmware`/`faster` show
+    /// as themselves as you type, not only at the word boundary.
+    ///
+    /// Default **ON**: an earlier, stricter companion to `restoreIfInvalid`'s
+    /// existing word-boundary revert. `EngineConfig` still defaults it false
+    /// so the engine/test level stays untouched until the app turns it on,
+    /// same pattern as `freeMarkAcrossCoda`/`literalAfterCancel`.
     var spellCheck: Bool = AppModel.loadBool(Keys.spellCheck, default: true) {
-        didSet { UserDefaults.standard.set(spellCheck, forKey: Keys.spellCheck) }
+        didSet {
+            UserDefaults.standard.set(spellCheck, forKey: Keys.spellCheck)
+            pushConfig()
+        }
     }
+
+    // MARK: - Scaffolding — persisted, displayed, not yet in EngineConfig
 
     /// "Viết Hoa chữ cái đầu câu". Default OFF — sentence-start detection in
     /// a system-wide IME is unreliable (see DECISIONS.md "Quick consonants &
@@ -916,7 +929,8 @@ final class AppModel {
             autoCapitalize: autoCapitalize,
             allowFreeToneMark: allowFreeToneMark,
             freeMarkAcrossCoda: freeMarkAcrossCoda,
-            literalAfterCancel: literalAfterCancel
+            literalAfterCancel: literalAfterCancel,
+            spellCheck: spellCheck
         ))
     }
 
