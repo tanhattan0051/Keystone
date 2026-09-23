@@ -1768,41 +1768,25 @@ exactly like `Engine.lexicon`, so no existing test or corpus fixture is
 affected until something installs it — proven by full-suite regression
 (`LexiconRestoreTests`, `LiteralRestoreTests`, `LiteralAfterCancelTests`,
 `EagerRestoreTests`, and the whole corpus suite are all unchanged).
+## Deferred across-coda circumflex — tried, reverted
 
-## Deferred across-coda circumflex (smooth typing)
+The across-coda circumflex (`freeMarkAcrossCoda`, e.g. `hopoj`→hộp, `tana`→tân,
+`trene`→trên) is applied EAGERLY, per keystroke — like every other mark. This
+means an English word with the same vowel–consonant–vowel shape flashes
+pseudo-Vietnamese mid-word (`manager` shows mân→mâng before later keys make it
+invalid and it reverts to raw; the final commit is still correct). OpenKey has
+the identical flash (it shows `mânger`), because at the moment the second vowel
+is typed `tan`+`a` and `man`+`a` are the same keystrokes.
 
-`freeMarkAcrossCoda` lets a Telex quality mark cross a consonant coda to
-circumflex an earlier vowel (`trene`→trên, `tana`→tân) — the maintainer's
-"bỏ dấu ở cuối" style. The catch: at the moment the second vowel is typed,
-`tan`+`a` and `man`+`a` are the SAME keystrokes, so eagerly applying the mark
-turns a still-in-progress English word into pseudo-Vietnamese mid-word
-(`manager` flashes `mân`→`mâng` before the later keys make it invalid and it
-reverts). OpenKey has the exact same behavior (it shows `mânger`), so this is
-inherent to the feature, not a bug in one engine — the two keystroke streams
-are genuinely indistinguishable while typing.
-
-**Fix: apply the across-coda circumflex ONLY at commit, never mid-word.**
-`Telex.fold`/`apply` take a `committing` flag; `Engine.interpret` passes it
-`true` only for `finalize`'s word-boundary fold and `false` for the
-per-keystroke `rerender`. The across-coda branch (`Telex.apply`, the
-`freeMarkAcrossCoda` circumflex fallback) is gated on `committing`, so:
-
-- While typing, `tana`/`trene` stay literal (`tana`, `trene`) — no mark, no
-  flash. `manager` shows `mana`/`manag`/`manage`/`manager` throughout.
-- At the word boundary, the fold runs with `committing: true`: `tana`→`tân`,
-  `trene`→`trên` (valid, kept), while `manager` folds to the invalid `mânger`
-  and `restoreIfInvalid` reverts it to raw `manager`.
-
-Everything else stays EAGER (applied per keystroke), so nothing else feels
-delayed: the within-nucleus circumflex (`aa`→â, `treen`→trên), the đ-stroke
-(`dadx`→đã, `dadng`→đang) and all tone marks (`toans`→toán, `camr`→cảm) are
-untouched — only the across-coda VOWEL mark waits for the boundary. The trade
-is that `tân` (typed `tana`) appears when the syllable is committed rather than
-instantly; in exchange there is never a wrong mid-word flash, so typing reads
-as smooth (and strictly cleaner than OpenKey, which leaves `mânger`). Pinned by
-`DeferredCircumflexTests.swift`; every existing test (which asserts committed
-output) is unchanged, since commit behavior is identical.
-
+We briefly DEFERRED this mark to the word boundary (a `committing` flag on
+`Telex.fold`, true only in `finalize`) to kill that flash. It worked for English
+— but it also delayed EVERY Vietnamese word typed in the "bỏ dấu ở cuối" style
+(`hopoj`→hộp, `tana`→tân, `cana`→cân…) to the boundary, showing the literal
+keystrokes until Space. The maintainer types Vietnamese in exactly that style
+constantly, so the delay was far more disruptive than the occasional English
+flash. Reverted: the across-coda circumflex is eager again. The flash is the
+accepted cost of the feature (and matches OpenKey); `restoreIfInvalid`/eager
+restore still land the correct final English word.
 ## The ddd→dd escape in raw-restore
 
 `dd`→đ is the Telex đ transform, so to type two LITERAL `d`s you press three:

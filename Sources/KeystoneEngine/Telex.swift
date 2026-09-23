@@ -51,7 +51,7 @@ enum Telex {
         _ keys: [Character], quickTelex: Bool = false,
         quickStartConsonant: Bool = false, quickEndConsonant: Bool = false,
         allowFreeToneMark: Bool = true, freeMarkAcrossCoda: Bool = false,
-        literalAfterCancel: Bool = false, committing: Bool = false
+        literalAfterCancel: Bool = false
     ) -> Composition {
         var cells: [Cell] = []
         var tone: Tone = .ngang
@@ -82,8 +82,7 @@ enum Telex {
                                quickStartConsonant: quickStartConsonant,
                                quickEndConsonant: quickEndConsonant,
                                allowFreeToneMark: allowFreeToneMark,
-                               freeMarkAcrossCoda: freeMarkAcrossCoda,
-                               committing: committing)
+                               freeMarkAcrossCoda: freeMarkAcrossCoda)
                 if literalAfterCancel && effect == .literal { cancelled = true }
             }
             prevChar = lo
@@ -102,8 +101,7 @@ enum Telex {
         quickStartConsonant: Bool = false,
         quickEndConsonant: Bool = false,
         allowFreeToneMark: Bool = true,
-        freeMarkAcrossCoda: Bool = false,
-        committing: Bool = false
+        freeMarkAcrossCoda: Bool = false
     ) -> Effect {
 
         // 0. Start-consonant shortcut (Telex "gõ tắt phụ âm đầu"), onset only.
@@ -311,20 +309,17 @@ enum Telex {
             // mark yet, genuinely across a coda (there is at least one
             // consonant between it and the buffer end; otherwise it would
             // already have been found above, so this never overlaps that
-            // within-nucleus path). This is what makes `trene`→trên possible.
-            //
-            // DEFERRED TO COMMIT (`committing`): this across-coda circumflex is
-            // applied ONLY at the word boundary (`Engine.finalize`), never in
-            // the per-keystroke `Engine.rerender` (which passes committing =
-            // false). "tana" and "trene" therefore stay literal WHILE typing
-            // and become "tân"/"trên" only when the syllable is committed — so
-            // an English word passing through the same V-C-V shape (`manager`)
-            // never flashes pseudo-Vietnamese ("mân"/"mâng") mid-word: at
-            // commit it folds to "mânger", fails validity, and reverts to raw.
-            // The within-nucleus circumflex (aa→â, treen→trên) and the đ-stroke
-            // both stay eager — only this across-coda vowel mark waits.
-            // See DECISIONS.md "Deferred across-coda circumflex (smooth typing)".
-            if ei == nil, canCirc, freeMarkAcrossCoda, committing {
+            // within-nucleus path). Applied EAGERLY (per keystroke) so a
+            // Vietnamese word typed in the "bỏ dấu ở cuối" style shows its
+            // circumflex as it is typed — `hopoj`→hộp, `tana`→tân, `trene`→trên.
+            // Accepted cost: an English word with the same V-C-V shape flashes
+            // pseudo-Vietnamese mid-word (`manager`→mân/mâng) before later keys
+            // make it invalid and it reverts (same as OpenKey). See DECISIONS.md
+            // "Deferred across-coda circumflex" for why deferring it (to kill the
+            // flash) was tried and reverted: it delayed EVERY Vietnamese
+            // across-coda word to the boundary, which the maintainer types too
+            // often to accept.
+            if ei == nil, canCirc, freeMarkAcrossCoda {
                 var acrossCoda: Int? = nil
                 for i in cells.indices.reversed() {
                     guard cells[i].isVowel, cells[i].base == bv, cells[i].mark == .none else { continue }

@@ -201,13 +201,7 @@ public final class Engine {
         ch == "." || ch == "!" || ch == "?" || ch.isNewline
     }
 
-    /// `committing` is true only for the word-boundary fold in `finalize`; the
-    /// per-keystroke `rerender` fold leaves it false. It gates Telex's
-    /// across-coda circumflex so that mark is applied ONLY at commit (see
-    /// `Telex.apply`'s across-coda branch and DECISIONS.md "Deferred across-coda
-    /// circumflex"): `tana`→tân appears at the word boundary, not mid-word, and
-    /// English `manager` never flashes `mân`/`mâng` while typing.
-    private func interpret(_ keys: [Character], committing: Bool = false) -> Composition {
+    private func interpret(_ keys: [Character]) -> Composition {
         switch config.inputMethod {
         case .vni: return VNI.fold(keys, allowFreeToneMark: config.allowFreeToneMark,
                                     freeMarkAcrossCoda: config.freeMarkAcrossCoda,
@@ -217,8 +211,7 @@ public final class Engine {
                                       quickEndConsonant: config.quickEndConsonant,
                                       allowFreeToneMark: config.allowFreeToneMark,
                                       freeMarkAcrossCoda: config.freeMarkAcrossCoda,
-                                      literalAfterCancel: config.literalAfterCancel,
-                                      committing: committing)
+                                      literalAfterCancel: config.literalAfterCancel)
         }
     }
 
@@ -281,7 +274,7 @@ public final class Engine {
             return EngineResult(backspaceCount: bs, text: text)
         }
 
-        let comp = downgradeOpenUoHorn(interpret(rawKeys, committing: true))
+        let comp = downgradeOpenUoHorn(interpret(rawKeys))
         let table = outputTable(for: config.codeTable)
         // Sentence auto-capitalize (Phase 4): applied at commit, to whichever
         // branch actually wins below, on top of the already-decided isValid
