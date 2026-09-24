@@ -68,11 +68,16 @@ public final class Engine {
     /// no-op one"). Read-only and side-effect free — `Engine` stays pure.
     public var isComposing: Bool { !rawKeys.isEmpty }
 
-    /// Whether the NEXT committed word starts a new sentence — used only by
-    /// macro `autoCapitalize` (see `MacroTable.expandedText`). A `.`, `!`,
-    /// `?`, or newline boundary starts a new sentence; committing any word
-    /// (with any other boundary) means the next one does not.
-    private var atSentenceStart = true
+    /// Glue-aware sentence tracker driving BOTH `EngineConfig.autoCapitalize`
+    /// (see `finalize`'s `shouldCapitalize`) and macro `autoCapitalize` (see
+    /// `MacroTable.expandedText`) — see DECISIONS.md "Auto-capitalize: dấu
+    /// kết câu phải có khoảng trắng theo sau" for why a plain Bool can't
+    /// represent "just saw a terminator, not yet sure it ends the sentence".
+    private var sentencePosition: SentencePosition = .sentenceStart
+    /// Call sites below only ever need "is the NEXT committed word sentence-
+    /// initial", so they read this instead of matching on `sentencePosition`
+    /// directly.
+    private var atSentenceStart: Bool { sentencePosition.isSentenceStart }
     /// Raw keys typed while Vietnamese input is off — the English-mode macro
     /// buffer (see `processInactive`/`flushInactive`), independent of
     /// `rawKeys` above (which only composes while active).
@@ -89,7 +94,18 @@ public final class Engine {
                 rawKeys.append(ch)
                 return rerender()
             } else {
-                if rawKeys.isEmpty { return EngineResult(backspaceCount: 0, text: String(ch)) }
+                if rawKeys.isEmpty {
+                    // No word composing, so `finalize` never runs for this
+                    // boundary — but the character itself can still carry
+                    // sentence information (e.g. the SPACE that promotes a
+                    // pending "." into a real sentence start almost always
+                    // arrives with nothing composing, since the "." itself
+                    // already committed the word). See DECISIONS.md
+                    // "Auto-capitalize: dấu kết câu phải có khoảng trắng
+                    // theo sau".
+                    updateSentenceStart(boundary: ch, hadWord: false)
+                    return EngineResult(backspaceCount: 0, text: String(ch))
+                }
                 return finalize(boundary: ch)   // commit current word, then emit ch literally
             }
         }
@@ -98,27 +114,34 @@ public final class Engine {
     public func flush() -> EngineResult { finalize(boundary: nil) }
 
     /// Return/KeypadEnter: finalize the current word like `flush()`, but ALSO
-    /// force `atSentenceStart = true` — a newline starts a new sentence, even
-    /// though the physical Return key (not this method) is what actually
-    /// inserts the `\n`. `finalize(boundary: nil)` commits the pending word
-    /// without emitting any boundary character, so no `\n` ever ends up in
-    /// the returned edit text.
+    /// set `sentencePosition = .sentenceStart` — a newline starts a new
+    /// sentence, even though the physical Return key (not this method) is
+    /// what actually inserts the `\n`. `finalize(boundary: nil)` commits the
+    /// pending word without emitting any boundary character, so no `\n` ever
+    /// ends up in the returned edit text.
     public func flushNewline() -> EngineResult {
         let r = finalize(boundary: nil)
-        atSentenceStart = true
+        sentencePosition = .sentenceStart
         return r
     }
 
     public func reset() {
         rawKeys = []; prevUnits = []
-        // NOT `true`: a reset fires on a caret move / app switch / nav key,
-        // none of which tell the engine it's actually at a sentence start —
-        // so the next word must NOT auto-capitalize just because the buffer
-        // was cleared. A brand-new `Engine`'s stored-property initial value
-        // (above) is left at `true` on purpose: that only affects the very
-        // first word of a fresh engine, which existing `AutoCapitalize` tests
-        // rely on.
-        atSentenceStart = false
+        // `.afterReset`, NOT `.sentenceStart`: a reset fires on a mouse
+        // click / app switch / Cmd-Ctrl-Option chord / deactivation, none of
+        // which tell the engine it's actually at a sentence start — so the
+        // next word must NOT auto-capitalize just because the buffer was
+        // cleared. But it's also NOT plain `.midSentence`: the engine has no
+        // idea what's actually sitting before the caret after a reset
+        // (pasted text, pre-existing text, a word typed while Vietnamese was
+        // off), so `.afterReset` conservatively assumes real text is there —
+        // see its doc comment in SentencePosition.swift — which is what lets
+        // a terminator typed right after a reset still confirm on a
+        // following whitespace. A brand-new `Engine`'s stored-property
+        // initial value (above) is left at `.sentenceStart` on purpose: that
+        // only affects the very first word of a fresh engine, which existing
+        // `AutoCapitalize` tests rely on.
+        sentencePosition = .afterReset
         englishRawKeys = []
     }
 
@@ -155,16 +178,25 @@ public final class Engine {
     }
 
     /// Return/KeypadEnter counterpart of `flushInactive()` — see
-    /// `flushNewline()`'s doc comment for why `atSentenceStart` is forced
-    /// `true` here without emitting a `\n` of its own.
+    /// `flushNewline()`'s doc comment for why `sentencePosition` is set to
+    /// `.sentenceStart` here without emitting a `\n` of its own.
     public func flushInactiveNewline() -> EngineResult {
         let r = matchEnglishMacro(boundary: nil)
-        atSentenceStart = true
+        sentencePosition = .sentenceStart
         return r
     }
 
     public func resetInactive() {
         englishRawKeys = []
+        // Same reasoning as `reset()`, including the `.afterReset` (not
+        // `.midSentence`) choice: the only caller is a Cmd/Ctrl/Option chord
+        // in English mode (Cmd+V, Option+←, ...) — `EngineController.handle`'s
+        // `.resetPassthrough` case while `!active` — which tells the engine
+        // nothing about being at a sentence start, so neither a pending
+        // terminator nor a sentence start may survive it — but also nothing
+        // about what text (if any) already sits before the caret, so a
+        // terminator typed right after can still confirm.
+        sentencePosition = .afterReset
     }
 
     /// Shared match+clear logic for `processInactive`'s boundary case and
@@ -187,18 +219,14 @@ public final class Engine {
         return EngineResult(backspaceCount: triggerLength, text: text)
     }
 
-    /// Sentence-start tracking for macro `autoCapitalize` only — kept small
-    /// and separate from the rest of `finalize`'s logic on purpose.
+    /// Sentence-start tracking, shared by `EngineConfig.autoCapitalize` and
+    /// macro `autoCapitalize` — kept small and separate from the rest of
+    /// `finalize`'s logic on purpose. All the actual transition logic (why a
+    /// terminator needs trailing whitespace, why other punctuation is
+    /// transparent, why committing a word cancels a pending terminator)
+    /// lives in the pure `SentencePosition.after`; this just feeds it.
     private func updateSentenceStart(boundary: Character?, hadWord: Bool) {
-        if let b = boundary, isSentenceTerminator(b) {
-            atSentenceStart = true
-        } else if hadWord {
-            atSentenceStart = false
-        }
-    }
-
-    private func isSentenceTerminator(_ ch: Character) -> Bool {
-        ch == "." || ch == "!" || ch == "?" || ch.isNewline
+        sentencePosition = sentencePosition.after(boundary: boundary, committedWord: hadWord)
     }
 
     private func interpret(_ keys: [Character]) -> Composition {

@@ -258,7 +258,9 @@ list surfaces the decode error instead of silently wiping the list.
 
 **autoCapitalize semantics, and why it's dormant.** `Engine` tracks
 `atSentenceStart`: `.`, `!`, `?`, and newline boundaries start a new
-sentence; committing any word (via any other boundary) ends it. A macro's
+sentence (a `.`/`!`/`?` only once whitespace confirms it — see "Auto-capitalize:
+dấu kết câu phải có khoảng trắng theo sau" below); committing any word (via
+any other boundary) ends it. A macro's
 replacement gets its first character uppercased only when ALL of: the
 per-macro `MacroRule.autoCapitalize` is on, the global
 `EngineConfig.macroAutoCapitalize` is on, the cursor is at a sentence start,
@@ -479,11 +481,16 @@ engine), out of step with `EngineConfig`'s own OFF default above — it is now
 `false` in both `loadBool(..., default:)` and `resetToDefaults()`.
 Sentence-start detection is unreliable in a system-wide IME (no real
 knowledge of cursor context), so the feature stays opt-in. Separately,
-`Engine.reset()` — called on caret moves, app switches, and other nav keys —
-now sets `atSentenceStart = false` instead of `true`: a reset has no actual
-information that the next word starts a sentence, so it must not
-auto-capitalize it. Only a real sentence terminator (`.`/`!`/`?`/newline)
-seen by `updateSentenceStart` sets it back to `true`. A brand-new `Engine`'s
+`Engine.reset()` — called on a mouse click, an app switch/keyboard-focus
+change, a Cmd/Ctrl/Option chord, and deactivation (arrows, Home/End,
+PageUp/PageDown, Tab and Escape all go through `flush()` instead, which
+keeps the position as-is) — now sets `atSentenceStart = false` instead of
+`true`: a reset has no actual information that the next word starts a
+sentence, so it must not auto-capitalize it. Only a real sentence terminator
+(`.`/`!`/`?`/newline)
+seen by `updateSentenceStart` sets it back to `true` (refined below:
+`.`/`!`/`?` now also need whitespace after them — see "Auto-capitalize: dấu
+kết câu phải có khoảng trắng theo sau"). A brand-new `Engine`'s
 stored-property initial value is untouched (still `true`), so a fresh
 engine's very first word is still treated as sentence-initial — this is what
 the existing `AutoCapitalizeTests` suite (fresh engines) relies on.
@@ -519,15 +526,257 @@ Enter capitalizes the word that follows it; behavior is a no-op with
 `autoCapitalize` off) and `TranslatorTests.swift` (`keyCode 36`/`76` →
 `.commitNewline`, `keyCode 48` (Tab) still `.commitPassthrough`).
 
+## Auto-capitalize: dấu kết câu phải có khoảng trắng theo sau
+
+**Bug:** any `.`/`!`/`?` was a sentence boundary the instant it was typed,
+even glued to the next word — `"readme.m"` + Tab gave `"readme.M"`;
+`"google.com "` → `"google.Com "`; `"obj.method("` → `"obj.Method("`. Macro
+`autoCapitalize` shared the same bug in both Vietnamese and English mode
+(one shared tracker).
+
+**Fix:** a glue-aware `SentencePosition` struct
+(`Sources/KeystoneEngine/SentencePosition.swift`) replaces `atSentenceStart:
+Bool`. It carries three fields: `settled` (`.midSentence` / `.sentenceStart`
+— where a word typed right now would land, IGNORING any pending terminator),
+`pending` (`nil` / `.confirmable` / `.unconfirmable` — a `.`/`!`/`?` still
+waiting on trailing whitespace), and `gluedToText` (whether the last thing
+typed was real text a terminator can plausibly end — a word, a digit, a
+closer, another terminator — as opposed to whitespace or an opening
+bracket/quote). `Engine.atSentenceStart` reads `sentencePosition.
+isSentenceStart` (`settled == .sentenceStart && pending == nil &&
+!gluedToText`); the one new wire is still `process`'s `rawKeys.isEmpty` early
+return also calling `updateSentenceStart`, the path the confirming space
+after a "." takes.
+
+The `!gluedToText` clause fixes a pre-existing false capital, same in base
+6ba2ab7 and e50c3ad (VNI already right — VNI digits are word chars and never
+take this path at all): a unit glued straight onto a line-start digit is a
+continuation of that digit's own token, not a sentence-initial word of its
+own, even though `settled` survives the digit's cancel of the pending
+terminator (see the letter/digit branch below). Telex: `xin chaof. 3h
+chieeuf nay` → "Xin chào. 3h chiều nay" (was "3H"), `flushNewline()` + `10h
+sangs` → "10h sáng" (was "10H"), `hoa. 5kg gaoj` → "Hoa. 5kg gạo" (was
+"5Kg"), `flushNewline()` + `2nd place` → "2nd place" (was "2Nd"). A bare
+digit FOLLOWED BY WHITESPACE before the next word is unaffected (`hoa. 3
+lan` → "Hoa. 3 Lan", `1.1 Giới thiệu`): the whitespace clears the glue
+before that word ever commits. See
+`AutoCapitalizeUnitGluedToNumberAtSentenceStartTests` in
+`EngineTogglesTests.swift`.
+
+`after(boundary:committedWord:)`: a committed word collapses the state to
+`.midSentence` + glued (cancelling any pending terminator — it was already
+judged against the OLD state by `finalize`, so "readme.md", ".gitignore" and
+"...và" stay lowercase); `nil` (Tab/arrows/Escape flush) leaves the state
+exactly as-is; a newline always goes to `.sentenceStart`; a `.`/`!`/`?` opens
+`pending` — `.confirmable` if `gluedToText` was true, `.unconfirmable`
+otherwise (a run like "?!"/"..." inherits the FIRST terminator's kind);
+whitespace promotes a `.confirmable` pending to `.sentenceStart`, or
+*resumes* an `.unconfirmable` one at its `settled` value unchanged (it never
+confirms, no matter how much whitespace follows); a letter or digit glued
+onto a pending terminator cancels it back to `settled` (not to
+`.midSentence`) — this is what lets "1.1 Giới thiệu" and "24.09 Họp" (Telex
+only — see the qualification below) keep the capital a `flushNewline`
+sentence start already earned, even though the glued digit cancels the ".";
+a CLOSER (`)` `]` `}` `”` `’` `»`) forces `gluedToText = true` — even when
+nothing was pending yet — and, if what's pending is itself
+`.unconfirmable` (opened INSIDE the same bracket, glued to nothing), closes
+it back to `settled` with no resurrection: this is what lets a terminator
+reached right AFTER the closer open a fresh confirmable window ("(!). Sau",
+"quá :). Mai"), while a `.confirmable` pending (opened BEFORE the bracket,
+e.g. "hoa.) Lan" inside "(hoa.) Lan") is left alone, since the bracket is
+just ordinary punctuation relative to that still-open question; an opening
+bracket/quote (`(` `[` `{` `“` `‘` `«`) clears the glue without touching
+`settled`/`pending` (so an editorial aside like "(!)" or "(...)" only ever
+opens an UNCONFIRMABLE window, exactly like a terminator typed right after
+whitespace); everything else — straight quotes and ordinary punctuation
+`, ; : - * _ \` ~ | / @ # =` (a bare or glued "=" included: there is no
+dedicated "=" rule) — is fully transparent.
+
+**`.afterReset`, not `.midSentence`.** `Engine.reset()`/`resetInactive()`
+(mouse click, app/keyboard-focus switch, a Cmd/Ctrl/Option chord such as
+Cmd+V, or deactivation — `EngineController.setActive(false)`, Vietnamese
+on→off; `setActive(true)` itself calls nothing) used to set `sentencePosition
+= .midSentence`
+— `settled: .midSentence, pending: nil, gluedToText: false`. That last
+`false` was itself a regression once `gluedToText` existed: after a reset
+the engine genuinely has no idea what's sitting right before the caret —
+pasted text, pre-existing text, a word typed while Vietnamese was off — so
+assuming NOTHING is there (`gluedToText: false`) meant a terminator typed
+right after a reset could never confirm any more, even with a real word
+right before it: `"hoa"` + `reset()` + `". lan "` gave `"hoa. lan "` instead
+of `"hoa. Lan "`; `setActive(false)` → [text typed while Vietnamese was
+off, invisible to the engine] → `setActive(true)` → `". nos raats"` gave
+`"...Docker. nó rất"` instead of `"...Docker. Nó rất"`; English mode,
+`resetInactive()` then `". md"` gave `"hello. markdown"` instead of
+`"hello. Markdown"`. Fix: `SentencePosition.afterReset` (`settled:
+.midSentence, pending: nil, gluedToText: true`) conservatively assumes real
+text IS already there, and `reset()`/`resetInactive()` now set
+`sentencePosition = .afterReset` instead of `.midSentence`. The next WORD
+right after a reset still does NOT capitalize on its own — `settled ==
+.midSentence` and `pending == nil` still make `isSentenceStart` false —
+only a terminator that goes on to reach a confirming whitespace does.
+
+Accepted consequence of the conservative `gluedToText: true` assumption: if
+a reset actually lands right after WHITESPACE rather than text (the caller
+has no way to tell `Engine` which), a terminator typed right after now
+WRONGLY confirms — `"hoa "` + `reset()` + `". lan "` gives `"hoa . Lan "`
+(capital "L"), even though the terminator is directly preceded by the space
+that was already on screen before the reset, exactly the shape that stays
+lowercase without a reset in between (`"hoa . lan "` → `"hoa . lan "`, no
+capital). This is the price of fixing the `"hoa"` + `reset()` + `". lan "`
+case above — the two are indistinguishable to `Engine` at reset time — and
+is accepted as a false capital that's rarer in practice (reset right at a
+trailing space) than the missed capital it replaces.
+
+**Deliberate behavior changes** (relative to before this whole fix — commit
+6ba2ab7 — not bugs):
+- Telex `nawm 2020. tieeps` → "Năm 2020. Tiếp" (was "tiếp"), matching English mode.
+- after Enter `...vaf` → "...và" (was "...Và") and `.gitignore` stays lowercase
+  (was ".Gitignore").
+- `hoa.<Tab>lan` → lowercase "lan" (was "Lan") — Tab/arrows/Escape carry no
+  character, deliberately conservative (Tab may be focus change or shell completion).
+- Telex, a terminator reached right after a CLOSER now ends the sentence:
+  `hoa). lan` → "Hoa). Lan" (was "Hoa). lan"), `(xem hinhf 1). tieeps` →
+  "(Xem hình 1). Tiếp" (was "... tiếp"), and — starting mid-sentence, e.g.
+  after `reset()`, so the comparison isn't muddied by a fresh engine's own
+  first-word capital — `(...). sau` → "(...). Sau" (was "(...). sau") — base
+  stayed lowercase in all three, since base ignored a terminator reached
+  with nothing composing entirely, so it never even looked at the closer.
+- English mode (macro `autoCapitalize`, Vietnamese off): base's
+  `matchEnglishMacro` called `updateSentenceStart` unconditionally for EVERY
+  boundary, composing or not, so a terminator reached after whitespace/an
+  aside/an operator DID capitalize there before this fix, and now (correctly)
+  doesn't: `hello . md` → "hello . markdown" (was "hello . Markdown"),
+  `is it ok ? md`, `wait ... md`, `x != md`, `y ?? md` → all now stay
+  lowercase `markdown`. (Vietnamese mode never had this bug — see below.)
+
+Everything else this feature touches in **VIETNAMESE mode** is UNCHANGED
+from before this fix WHEN TYPED CONTINUOUSLY, WITH NO RESET IN BETWEEN: a
+terminator that was never glued to real text — one typed right after
+whitespace (`hoa . lan` stays lowercase "lan") or inside an editorial aside
+(`(!)`, `(?)`, `(...)`) or an operator (`!=`, `!==`, `??`, the ternary
+`?:`) — never opened a confirmable window even under the original Bool
+tracker, and still doesn't. This does NOT hold in English mode — see the
+deliberate change above — and it does NOT hold either when a `reset()` falls
+between the whitespace and the terminator — see the accepted consequence in
+the "`.afterReset`, not `.midSentence`." paragraph above (`"hoa "` +
+`reset()` + `". lan "` → `"hoa . Lan "`, a false capital `reset()`-free
+typing never produces).
+
+The line-start-numbered-heading claim (`1.1 Giới thiệu`, `24.09 Họp`,
+`2.3.1 Kết quả` keep their capital) holds in **TELEX ONLY**: a bare Telex
+digit is a boundary character reaching `SentencePosition` directly, which is
+what lets the "cancel back to `settled`, not `.midSentence`" rule preserve
+the inherited capital. In **VNI and English mode, digits are word
+characters** (`Engine.isWordChar`), so a digit-led "word" always reaches
+`SentencePosition` via the COMMITTED-WORD path instead — which
+unconditionally collapses to `.midSentence` — so `1.1 giới thiệu` /
+`hoa. 3.14 lan` stay lowercase there. This is unchanged in ALL versions
+(base, e50c3ad, and this fix) — VNI never took the digit-boundary path a
+Telex sentence does. A Telex sentence opening with a bare number still
+capitalizes the next word either way: `hoa. 3 lan` → "Hoa. 3 Lan" and
+`hoa. 3.14 lan` → "Hoa. 3.14 Lan" (both unchanged, Telex).
+
+**Accepted limitations:** the rule is simply "terminator + whitespace =
+sentence end" (the UniKey/OpenKey-style behavior Tân asked for; not verified
+against those apps). Telling an abbreviation apart would need a dictionary, so
+"e.g. x" → "e.g. X" (was "e.G. X") and "TP. hcm" → "TP. Hcm". A
+comma/semicolon/colon right after the terminator is transparent too, so
+"e.g., x" → "e.g., X" (was "e.G., X" — only the glued "g" changed). A
+passthrough Backspace over ANY single character the engine doesn't see
+directly — the terminator itself, the confirming whitespace, or a cancelling
+digit — is invisible to the engine, same as any other passthrough Backspace.
+A pending terminator survives Tab/arrow keys (`flush` keeps the state
+as-is), so moving the caret back into already-typed text after "tôi học."
+and typing " đã" can still give "Đã" — pre-existing, unchanged by this fix,
+awaiting Tân's decision. There is no dedicated "=" rule (deleted — see
+below): a terminator glued to a word on ONE side but followed by whitespace
+on the other is indistinguishable from a real "word. Word" sentence end, so
+asymmetric spacing capitalizes: `a!= b` → "a!= B", `a?= b` → "a?= B".
+
+A terminator right after a PUNCTUATION-ONLY token that itself follows
+whitespace never confirms, even once that token visibly ends — missed
+capitals, same in base 6ba2ab7 and e50c3ad (not new to this fix). Sad/symbol
+emoticons: `buồn quá :((. mai gặp` → "... :((. mai" (not "Mai"), `vui quá
+^^. mai` → "mai", and likewise `-_-.` and `@@.`. A quoted/backticked
+punctuation-only token behaves the same way: `anh nói "...". sau đó` → `"...".
+sau đó` (not "Sau"). Reason: the "(" of ":(" (an unmatched opener, glued to
+nothing) and the opening `"` both make `gluedToText` false exactly like
+whitespace would, and — for the quote case — the closing `"` never gets the
+CLOSER treatment `)`/`”` get (see the `.afterReset`/closer paragraph above),
+so nothing ever re-sets the glue before the "." is reached; either way the
+preceding whitespace genuinely leaves no TEXT for the terminator to end, and
+a missed capital is preferred over a false one. This does NOT apply to an
+emoticon that ends in a real closer — `:). Mai` and `=)). Mai` DO capitalize,
+via the ordinary closer rule (see `terminatorRightAfterAClosingParenInsideAnEmoticonCapitalizes`
+/ `terminatorRightAfterADoubleClosingParenEmoticonCapitalizes`). English mode
+has the same limitation: `so sad :((. md` → "so sad :((. markdown" (not
+"Markdown").
+
+**"=" rule deleted.** An earlier revision of this fix had a dedicated `=`
+branch that cancelled any pending terminator on sight, to keep code like
+`x != nil` and `a !== b` lowercase. With glue-awareness that branch is no
+longer needed for code — `x != nil` stays lowercase because the "!" reached
+after whitespace is unconfirmable regardless of the "=" that follows, and
+`a!=b` stays lowercase because the glued word commits against the still-
+PENDING state (which never reads as a sentence start either way) — and the
+branch actively broke Vietnamese chat emoticons, which routinely glue a
+terminator straight onto a word right before "=" or a closer:
+`vui quas!=)) mai gawpj` → "mai" (should be "Mai"), `thaatj har?=)) uwf` →
+"ừ" (should be "Ừ"), similarly for `vui quas.=)) mai` and `camr own!=)
+heenj`. The branch (and its unit tests) is deleted; "=" is now ordinary
+transparent punctuation like `,` `;` `:` `-`. The only casualty is the
+asymmetric-spacing case listed above.
+
+**Tests:** `SentencePositionTests.swift` covers `after` in isolation
+(including `.afterReset` and the closer/no-"=" behavior above); in
+`EngineTogglesTests.swift`:
+`AutoCapitalizeTerminatorNeedsWhitespace`,
+`AutoCapitalizeResetAssumesTextBeforeCaret` (reset/resetInactive still
+assume TEXT — not nothing — precedes the caret),
+`AutoCapitalizeOperatorsAndEditorialAsides` (operators/asides, the
+closer-reopens-the-window pins, and the no-"=" emoticon pins),
+`AutoCapitalizeLineStartNumberedHeadings` (Telex-only, with a VNI pin
+documenting the qualification),
+`AutoCapitalizeUnitGluedToNumberAtSentenceStart` (the `!gluedToText` fix
+above — "3h", "10h", "5kg", "2nd"),
+`AutoCapitalizeAcceptedLimitationsPunctuationOnlyToken` (the
+punctuation-only-token accepted limitation above), `AutoCapitalizeMutationCoveragePins`, and
+`EnglishModeGlueAwareDeliberateChanges` (the English-mode-only
+capitalization changes above) cover the engine wiring (bug repros, VNI,
+markdown closers, Tab/reset/newline pins, operators, editorial asides and
+numbered headings).
+
+## Auto-capitalize: resetInactive() cũng xoá vị trí đầu câu
+
+`Engine.reset()` (active-mode `.resetPassthrough`, plus mouse clicks, app
+switches and deactivation in both modes) already reset `sentencePosition`,
+but `resetInactive()` — English mode's `.resetPassthrough`, i.e. a
+Cmd/Ctrl/Option chord such as Cmd+V or Option+← — only cleared
+`englishRawKeys`. So such a chord right after `"hoa."` still left a pending
+terminator standing, and on a fresh engine the initial `.sentenceStart`, and
+`" md"` / `"md"` after it expanded the `md` macro as `"Markdown"` instead of
+`"markdown"`. A reset key carries no information that the next word starts a
+sentence, so `resetInactive()` now also resets `sentencePosition`, same as
+`reset()` — both now to `.afterReset` (`.midSentence` at the time of this
+fix; see the "`.afterReset`, not `.midSentence`." paragraph in
+"Auto-capitalize: dấu kết câu phải có khoảng trắng theo sau" above for why
+it's `.afterReset` today: the next word right after either reset still does
+not capitalize on its own either way).
+Covered by `EngineTogglesTests.swift`'s `EnglishModeResetClearsSentenceStart`
+suite.
+
 ## Không tự viết hoa trong Terminal
 
 **Bug:** with `autoCapitalize` on, committing a word in a terminal
 capitalizes it, which breaks shell/CLI completion. Reproduced in the engine:
 after `flushNewline()` (a fresh line), `"gi"` + Tab → `"Gi"` (git completion
 fails); after a fresh line, `"/com"` + Tab → `"/Com"` (a Claude Code slash
-command); `"cat readme.m"` + Tab → `"cat readme.M"` (a `.` with no following
-space already counts as a sentence end, so `readme.m` reads as two
-sentences).
+command). A third case at the time, `"cat readme.m"` + Tab → `"cat
+readme.M"`, came from a `.` with no following space counting as a sentence
+end; the engine fix in "Auto-capitalize: dấu kết câu phải có khoảng trắng
+theo sau" (above) removed it, so the terminal mask here is only about the
+first word after a fresh line.
 
 **Why not a Tab-only fix:** Tab is `.commitPassthrough` → `Engine.flush()`.
 Space is a different path — `.character(" ")` → `Engine.process` →
@@ -585,7 +834,7 @@ scaffolding nobody needs.
 Only `handleAppActivation` used to call `controller.resetBuffer()`. Once the
 AX tracker below exists, that's not enough: when the iTerm2 panel shows or
 hides, no activation fires at all, so without a reset the engine's
-half-typed word AND its sentence-start flag would carry across apps — type
+half-typed word AND its sentence position would carry across apps — type
 `"git status"` + Return in the panel, hide it with F1, then type `"và "`
 mid-sentence in TextEdit → `"Và"`. `AppModel` tracks `keyFocusBundleID`, the
 last known app ACCEPTING KEYBOARD INPUT, written by BOTH
@@ -728,9 +977,10 @@ nothing) logs at `.error`.
 JetBrains IDEs, Xcode) share their host editor's bundle id, so they are not
 detected — typing in an integrated terminal still capitalizes. An unlisted
 terminal just needs its bundle id added to `TerminalApps.knownBundleIDs`.
-Outside a terminal, a bare `.` with no following space still counts as a
-sentence end (`readme.md`, `google.com` mid-sentence) — that's a separate,
-unfixed issue this change does not touch. The AX read itself can fail for
+Outside a terminal, what counts as a sentence end is the engine's own rule
+("Auto-capitalize: dấu kết câu phải có khoảng trắng theo sau", above: a
+`.`/`!`/`?` must be followed by whitespace), including that section's
+accepted limitations. The AX read itself can fail for
 some apps (then only the activation path applies, see above). Because the AX read is
 throttled, a commit key (Tab/Space) typed within one throttle interval
 (0.1s) of the first keystroke after a panel focus change may still be
