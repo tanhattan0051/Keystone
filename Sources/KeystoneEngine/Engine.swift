@@ -68,7 +68,7 @@ public final class Engine {
     /// no-op one"). Read-only and side-effect free — `Engine` stays pure.
     public var isComposing: Bool { !rawKeys.isEmpty }
 
-    /// Tri-state sentence tracker driving BOTH `EngineConfig.autoCapitalize`
+    /// Glue-aware sentence tracker driving BOTH `EngineConfig.autoCapitalize`
     /// (see `finalize`'s `shouldCapitalize`) and macro `autoCapitalize` (see
     /// `MacroTable.expandedText`) — see DECISIONS.md "Auto-capitalize: dấu
     /// kết câu phải có khoảng trắng theo sau" for why a plain Bool can't
@@ -77,7 +77,7 @@ public final class Engine {
     /// Call sites below only ever need "is the NEXT committed word sentence-
     /// initial", so they read this instead of matching on `sentencePosition`
     /// directly.
-    private var atSentenceStart: Bool { sentencePosition == .sentenceStart }
+    private var atSentenceStart: Bool { sentencePosition.isSentenceStart }
     /// Raw keys typed while Vietnamese input is off — the English-mode macro
     /// buffer (see `processInactive`/`flushInactive`), independent of
     /// `rawKeys` above (which only composes while active).
@@ -127,14 +127,21 @@ public final class Engine {
 
     public func reset() {
         rawKeys = []; prevUnits = []
-        // NOT `.sentenceStart`: a reset fires on a mouse click / app switch /
-        // Cmd-Ctrl-Option chord / deactivation, none of which tell the engine
-        // it's actually at a sentence start — so the next word must NOT auto-capitalize just because the
-        // buffer was cleared. A brand-new `Engine`'s stored-property initial
-        // value (above) is left at `.sentenceStart` on purpose: that only
-        // affects the very first word of a fresh engine, which existing
+        // `.afterReset`, NOT `.sentenceStart`: a reset fires on a mouse
+        // click / app switch / Cmd-Ctrl-Option chord / deactivation, none of
+        // which tell the engine it's actually at a sentence start — so the
+        // next word must NOT auto-capitalize just because the buffer was
+        // cleared. But it's also NOT plain `.midSentence`: the engine has no
+        // idea what's actually sitting before the caret after a reset
+        // (pasted text, pre-existing text, a word typed while Vietnamese was
+        // off), so `.afterReset` conservatively assumes real text is there —
+        // see its doc comment in SentencePosition.swift — which is what lets
+        // a terminator typed right after a reset still confirm on a
+        // following whitespace. A brand-new `Engine`'s stored-property
+        // initial value (above) is left at `.sentenceStart` on purpose: that
+        // only affects the very first word of a fresh engine, which existing
         // `AutoCapitalize` tests rely on.
-        sentencePosition = .midSentence
+        sentencePosition = .afterReset
         englishRawKeys = []
     }
 
@@ -181,11 +188,15 @@ public final class Engine {
 
     public func resetInactive() {
         englishRawKeys = []
-        // Same reasoning as `reset()`: the only caller is a Cmd/Ctrl/Option
-        // chord in English mode (Cmd+V, Option+←, ...), which tells the engine
+        // Same reasoning as `reset()`, including the `.afterReset` (not
+        // `.midSentence`) choice: the only caller is a Cmd/Ctrl/Option chord
+        // in English mode (Cmd+V, Option+←, ...) — `EngineController.handle`'s
+        // `.resetPassthrough` case while `!active` — which tells the engine
         // nothing about being at a sentence start, so neither a pending
-        // terminator nor a sentence start may survive it.
-        sentencePosition = .midSentence
+        // terminator nor a sentence start may survive it — but also nothing
+        // about what text (if any) already sits before the caret, so a
+        // terminator typed right after can still confirm.
+        sentencePosition = .afterReset
     }
 
     /// Shared match+clear logic for `processInactive`'s boundary case and
