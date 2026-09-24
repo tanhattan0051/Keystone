@@ -519,6 +519,237 @@ Enter capitalizes the word that follows it; behavior is a no-op with
 `autoCapitalize` off) and `TranslatorTests.swift` (`keyCode 36`/`76` →
 `.commitNewline`, `keyCode 48` (Tab) still `.commitPassthrough`).
 
+## Không tự viết hoa trong Terminal
+
+**Bug:** with `autoCapitalize` on, committing a word in a terminal
+capitalizes it, which breaks shell/CLI completion. Reproduced in the engine:
+after `flushNewline()` (a fresh line), `"gi"` + Tab → `"Gi"` (git completion
+fails); after a fresh line, `"/com"` + Tab → `"/Com"` (a Claude Code slash
+command); `"cat readme.m"` + Tab → `"cat readme.M"` (a `.` with no following
+space already counts as a sentence end, so `readme.m` reads as two
+sentences).
+
+**Why not a Tab-only fix:** Tab is `.commitPassthrough` → `Engine.flush()`.
+Space is a different path — `.character(" ")` → `Engine.process` →
+`finalize(boundary: " ")` — but it capitalizes too (`"ls "` → `"Ls "`).
+Special-casing Tab alone leaves every other terminal commit (Space, a
+punctuation boundary) still capitalizing.
+
+**Fix:** detect the terminal at the app layer instead of the engine. A new
+pure function, `TerminalApps.isTerminal(bundleID:)` (`Sources/KeystoneInput/
+TerminalApps.swift`), checks the bundle id of the app currently ACCEPTING
+KEYBOARD INPUT against a fixed list of known terminal emulators — this is
+deliberately NOT the same thing as NSWorkspace's plain "frontmost
+application" notion; see "Floating panels follow keyboard focus, not
+activation" below for why. `AppModel` tracks `keyFocusAppIsTerminal`,
+re-evaluated on every `NSWorkspace.didActivateApplicationNotification` via
+`updateKeyFocusAppIsTerminal(bundleID:)` (and once at `bootstrap()`, seeded
+from `NSWorkspace.shared.frontmostApplication?.bundleIdentifier` — no
+activation notification fires for an app that's already frontmost when
+Keystone launches, so without this a terminal open before launch would type
+capitalized until the next app switch). `pushConfig()` only runs when the
+flag actually flips, so an ordinary switch between two non-terminal apps (or
+two terminals) doesn't rebuild `EngineConfig`/`MacroTable` on every
+activation. `pushConfig()` itself passes `autoCapitalize && !keyFocusAppIsTerminal`
+and `macroAutoCapitalize && !keyFocusAppIsTerminal` into `EngineConfig` —
+both auto-capitalize paths (sentence-start and macro-triggered) are masked,
+since a macro expansion mid-command would break completion the same way.
+Only the engine-facing value is masked; the user's stored `autoCapitalize`/
+`macroAutoCapitalize` settings are untouched, so the Control Panel toggles
+still show whatever the user actually chose. The engine itself
+(`Sources/KeystoneEngine`) is not touched, so no engine test changes.
+
+**Exact, case-insensitive matching:** LaunchServices treats bundle ids
+case-insensitively, and sources disagree on case for the same app (Prompt 3
+is documented as both `com.panic.Prompt.3` and `com.panic.prompt.3`) — so
+matching lowercases both sides. Matching is exact, not prefix/suffix: a
+shared vendor prefix like `com.panic.` or `com.apple.` also covers
+non-terminal apps from the same vendor (Nova, Transmit, TextEdit), so a
+prefix match would over-fire.
+
+**Where the ids came from:** verified 2026-09-24 from each app's official
+repo Info.plist/build config, Apple's App Store lookup API, or its Homebrew
+cask `zap` stanza — two independent passes, cross-checked against each
+other. Termius ships two distinct ids depending on distribution channel
+(`com.termius.mac` for the Mac App Store build, `com.termius-dmg.mac` for
+the direct download) — both are listed.
+
+**Why no new toggle:** `autoCapitalize` is itself opt-in and defaults OFF
+(see "Quick consonants & auto-capitalize" above); a terminal simply never
+has sentences to capitalize, so there is no case where a user would want
+sentence capitalization while a listed terminal is frontmost. Adding a
+second toggle just to disable a behavior that's already wrong there would be
+scaffolding nobody needs.
+
+**Resetting the engine on a keyboard-focus change without an activation.**
+Only `handleAppActivation` used to call `controller.resetBuffer()`. Once the
+AX tracker below exists, that's not enough: when the iTerm2 panel shows or
+hides, no activation fires at all, so without a reset the engine's
+half-typed word AND its sentence-start flag would carry across apps — type
+`"git status"` + Return in the panel, hide it with F1, then type `"và "`
+mid-sentence in TextEdit → `"Và"`. `AppModel` tracks `keyFocusBundleID`, the
+last known app ACCEPTING KEYBOARD INPUT, written by BOTH
+`handleAppActivation` and `keyFocusTracker.onFocus`. The AX callback resets
+the buffer only when the bundle id it reports actually DIFFERS from
+`keyFocusBundleID` — comparing against the value the activation path also
+writes is what stops an ordinary Cmd-Tab from resetting the buffer twice:
+activation already reset it, so the first AX read afterwards reporting the
+SAME app must be a no-op, not a second reset that would drop the first
+letters of the word being typed into the new app. This gives the AX path
+the exact same reset semantics as activation — including the same race:
+like the async activation notification, the AX callback can land after the
+first keystroke has already been typed into the new target (see
+"Limitations" below for what that means in practice).
+
+**Floating panels follow keyboard focus, not activation.** The detection
+above rides on `NSWorkspace.didActivateApplicationNotification`, which
+covers ordinary app switching but misses a real, common case: iTerm2's F1
+hotkey window with "Floats" on (and Space set to "all spaces") is what the
+author actually uses as a terminal. Verified against iTerm2's own source
+(`sources/Hotkey/iTermProfileHotKey.m`, the `hotkeyWindowType`/`rollIn`
+methods): with those settings the hotkey window is an
+`iTermHotkeyWindowTypeFloatingPanel` — an `NSPanel` with
+`NSWindowStyleMaskNonactivatingPanel` — which by design takes key focus
+WITHOUT activating iTerm2. No `didActivateApplication` notification fires,
+and `NSWorkspace.frontmostApplication` keeps reporting whatever app was
+frontmost before the panel appeared, so `handleAppActivation` never sees the
+switch at all.
+
+*Why not the CGEvent field instead:* `CGEvent`'s `eventTargetUnixProcessID`
+looks like a shortcut, but at the tap type Keystone actually installs
+(`kCGSessionEventTap`) it still names the background app behind the panel,
+not the panel's own process — confirmed by testing, not usable here.
+
+*The fix — read the Accessibility API:* `AXUIElementCreateSystemWide()` →
+`kAXFocusedApplicationAttribute` → `AXUIElementGetPid` →
+`NSRunningApplication(processIdentifier:)?.bundleIdentifier`
+(`App/KeyFocusTracker.swift`). Apple's own docs define
+`kAXFocusedApplicationAttribute` as "the application element that is
+currently accepting keyboard input" — precisely the question activation
+can't answer for a non-activating panel. This isn't a novel trick: research
+before implementing found Karabiner-Elements explicitly detecting overlay
+windows such as Spotlight via the Accessibility API, Input Source Pro's
+"Enhanced Mode" listing `com.googlecode.iterm2` by name as a floating app it
+has to special-case, and Hammerspoon exposing the same
+`kAXFocusedApplicationAttribute` read as its standard way to ask "what has
+focus". A FAILED AX read (wrong CF type, a non-`.success` `AXError` —
+Electron/Chromium apps can return `kAXErrorNoValue` for this attribute, a
+hung app times out — or a pid that doesn't resolve to a running app) is
+treated as "no new information": `KeyFocusTracker` reports nothing and the
+last known key-focus app stands. It deliberately does NOT fall back to
+`NSWorkspace.shared.frontmostApplication`: while a non-activating panel is
+key that names the app UNDERNEATH it, so one transient timeout on a busy
+iTerm2 panel would flip the key-focus app away and back and reset the engine
+mid-word (see the reset below). The activation path already keeps the
+NSWorkspace answer current on its own. A focused app with no bundle
+identifier (an unbundled process) is a real answer (`nil`), not a failure.
+
+*Triggers:* activation stays the fast path (cheap, no AX call) via
+`handleAppActivation`. The AX read itself is driven by BOTH the GLOBAL and
+the LOCAL `NSEvent` monitor already installed for "Phím chuyển"
+(`installSwitchKeyMonitors()`): the global monitor observes
+keyDown/flagsChanged/mouse-down delivered to OTHER apps, which includes keys
+typed into a non-activating panel; the local monitor covers the mirror
+case — a non-activating panel taking key focus while Keystone itself is
+still the active app, where clicking back into one of Keystone's OWN
+windows fires no activation notification either, so without the local
+trigger the terminal mask (and the reset-on-focus-change above) would stay
+stuck on whatever last had AX focus. (The AX read landing on Keystone's own
+element there is still safe — it runs on the main thread, same as every
+other AX read here.) Both monitors' triggers, plus once at `bootstrap()`,
+mean a panel already focused before Keystone even launches is caught
+immediately rather than only after the next real switch.
+
+*Throttle:* a pure leading+trailing throttle (`RefreshThrottle.swift`, 0.1s)
+rate-limits the actual AX read against monitors that fire on every
+keystroke. `KeyFocusTracker.refresh()` stamps `throttle.didRun(at:)` with
+the time AFTER `readFocusedApp()` returns, not before the read starts — so
+a slow read (bounded by the messaging timeout below) can't eat its own
+cooldown and keep the main thread busy running back-to-back reads. Leading
+alone would miss the very case this exists for: the first keystroke typed
+into a just-summoned panel would run the AX read immediately with the panel
+not fully settled, or a rapid burst around the panel's appearance could all
+land inside one throttle window and get collapsed to just that first
+(stale) read. The trailing run guarantees the LAST request in a burst is
+always eventually honored, so the classification converges on the correct
+app shortly after focus actually settles instead of being permanently stuck
+on whichever app was focused when the burst started. At 0.1s, a stale
+window can only happen if the first key typed after a focus change arrives
+within one interval of the previous AX read — in practice the F1 press or
+click that itself causes the focus change already consumes most of that
+window, and the trailing run lands well before a commit key (Tab/Space) is
+typed.
+
+*Main thread + timeout:* `KeyFocusTracker` is `@MainActor` — Apple DTS
+guidance is to make Accessibility calls on the main thread, and a read that
+happens to land on one of Keystone's OWN windows runs AppKit code on the
+calling thread, which must be main. `AXUIElementSetMessagingTimeout` is
+applied lazily, on the first `refresh()` rather than in `init()`
+(Accessibility is very often not yet trusted at app launch, so an
+`init()`-time call would just fail silently; a flag set only on `.success`
+means a failed attempt retries on the very next refresh instead of being
+applied once and forgotten) — set to 0.25s on the system-wide element
+(Apple's default is ~6s if the focused app hangs), so a stuck app can only
+ever block this read for 0.25s. This is safe to do process-globally because
+Keystone's only other AX API use is `AXIsProcessTrusted`/
+`AXIsProcessTrustedWithOptions`, neither of which sends an AX request to
+another app (both unaffected by a messaging timeout). The CGEventTap itself
+runs on its own dedicated thread (`EventTapController`), so none of this can
+ever block typing.
+
+*Gate:* `AppModel.needsKeyFocusTracking` = `accessibilityTrusted &&
+TerminalApps.capitalizationCanFire(vietnameseEnabled: enabled, autoCapitalize:
+autoCapitalize, macrosEnabled: macrosEnabled, macroAutoCapitalize:
+macroAutoCapitalize, macrosExpandWhenVietnameseOff: macrosExpandWhenVietnameseOff)`
+— a pure function (`Sources/KeystoneInput/TerminalApps.swift`, unit-tested)
+mirroring `EngineController.handle`'s own gate: while Vietnamese is active,
+the engine's usual `autoCapitalize`/macro-triggered paths run
+(`autoCapitalize || (macrosEnabled && macroAutoCapitalize)`); while
+inactive, `handle` only routes through the engine at all (the "English-mode
+macros" path) when BOTH `macrosEnabled` AND `macrosExpandWhenVietnameseOff`
+are on, so capitalization there can only come from `macroAutoCapitalize` on
+top of that same pair. With the defaults (`autoCapitalize` OFF, macros OFF)
+this gate evaluates false, so Keystone makes no AX attribute reads / no AX
+requests to other apps — that's a consequence of the gate being off, not a
+hardcoded guarantee that holds independently of it.
+
+*Logging discipline:* `KeyFocusTracker` logs via `os.Logger` (category
+`KeyFocus`) only when the AX read's status actually CHANGES from the
+previous refresh — including recovering back to success — never on every
+call. A monitor firing on every keystroke would otherwise spam the log
+identically on every throttled read. A pid that resolves to a running app
+with no bundle identifier at all (an unbundled process, e.g. `swift run
+Keystone`) is a normal, expected case rather than a real failure, so it logs
+at `.debug`; a genuinely failed read (an AXError, an unexpected CF type, or
+a pid that doesn't resolve to a running app at all — each of which changes
+nothing) logs at `.error`.
+
+**Limitations:** IDE-integrated terminals (the panel inside VS Code,
+JetBrains IDEs, Xcode) share their host editor's bundle id, so they are not
+detected — typing in an integrated terminal still capitalizes. An unlisted
+terminal just needs its bundle id added to `TerminalApps.knownBundleIDs`.
+Outside a terminal, a bare `.` with no following space still counts as a
+sentence end (`readme.md`, `google.com` mid-sentence) — that's a separate,
+unfixed issue this change does not touch. The AX read itself can fail for
+some apps (then only the activation path applies, see above). Because the AX read is
+throttled, a commit key (Tab/Space) typed within one throttle interval
+(0.1s) of the first keystroke after a panel focus change may still be
+classified against the PREVIOUS app, and the reset-on-focus-change above
+only lands after the first keystroke in the new target — that keystroke is
+still processed against the old composing buffer, exactly as it already was
+with the asynchronous activation notification.
+
+**Verified on-device 2026-09-24.** The unit tests
+(`Tests/KeystoneInputTests/RefreshThrottleTests.swift`,
+`TerminalAppsTests.swift`) cover only the pure `RefreshThrottle` and
+`TerminalApps` logic; the AX read and both `NSEvent` monitors live in the
+untested `App/` target. The two premises the design rests on — keys typed
+into iTerm2's non-activating hotkey panel reach Keystone's global `NSEvent`
+monitor, and `kAXFocusedApplicationAttribute` returns iTerm2 while that
+panel is key — held up in Tân's manual check on his own machine (macOS 27,
+iTerm2 F1 hotkey window with "Floats" on and all Spaces, `autoCapitalize`
+on): Tab-completion in the panel no longer gets a capitalized first word.
+
 ## Onboarding / permissions (Phase 4)
 
 Resolves spec **§5 "Onboarding / permissions flow"**.

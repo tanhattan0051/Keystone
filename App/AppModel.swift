@@ -11,7 +11,10 @@
 //    autoCapitalize, allowFreeToneMark, freeMarkAcrossCoda,
 //    literalAfterCancel) is pushed into
 //    `EngineConfig` on every change and reaches the running tap via
-//    `EngineController.updateConfig`.
+//    `EngineController.updateConfig`. autoCapitalize/macroAutoCapitalize are
+//    additionally masked off while the app accepting keyboard input is a
+//    terminal emulator (see `keyFocusAppIsTerminal` and DECISIONS.md "Không
+//    tự viết hoa trong Terminal").
 //  - Everything else is scaffolding: real UI, real persistence, but no
 //    engine behavior yet (`EngineConfig` doesn't have a field for it). Each
 //    one is marked `// TODO: wire to engine`.
@@ -469,6 +472,36 @@ final class AppModel {
     /// independently of whether smart-switch is on, so turning a toggle on
     /// mid-session immediately has a `currentBundleID` to persist against.
     private var currentBundleID: String?
+    /// The last known app id ACCEPTING KEYBOARD INPUT — written by BOTH the
+    /// activation path (`handleAppActivation`) and the AX tracker path
+    /// (`keyFocusTracker.onFocus`, wired in `bootstrap()`), and compared
+    /// against on every AX read so the engine buffer only resets on a REAL
+    /// focus change, never a second time for the same switch (an ordinary
+    /// activation already reset it; the first AX read afterwards reporting
+    /// the same app must be a no-op, or it would drop the first letters of
+    /// the word being typed in the new app). Distinct from `currentBundleID`
+    /// above (NSWorkspace's own notion, used for per-app learned state) —
+    /// this one also has to see `nil` and Keystone's own bundle id, so it
+    /// starts `nil` and is seeded once at bootstrap rather than left for the
+    /// first activation.
+    private var keyFocusBundleID: String?
+    /// Whether the app currently accepting keyboard input is a known
+    /// terminal emulator — masks sentence auto-capitalize in `pushConfig()`
+    /// (see `updateKeyFocusAppIsTerminal(bundleID:)`). Fed by `keyFocusTracker`'s
+    /// AX read when that's live, and otherwise by the last NSWorkspace
+    /// activation or the bootstrap-time seed — deliberately NOT derived from
+    /// `currentBundleID` above, which skips `nil` and Keystone's own bundle
+    /// id and starts `nil`. `keyFocusAppIsTerminal` has to see those too (a
+    /// terminal already open before launch, or Keystone itself being
+    /// frontmost, both matter here), so it starts `false` instead.
+    private var keyFocusAppIsTerminal = false
+    /// AX-based correction for `keyFocusAppIsTerminal`: a non-activating
+    /// floating panel (e.g. iTerm2's F1 hotkey window) can take keyboard
+    /// focus without ever firing `NSWorkspace.didActivateApplicationNotification`,
+    /// so activation alone can't see it. `onFocus` is wired in `bootstrap()`.
+    /// See `needsKeyFocusTracking`/`requestKeyFocusRefresh()` and DECISIONS.md
+    /// "Floating panels follow keyboard focus, not activation".
+    private let keyFocusTracker = KeyFocusTracker()
     /// Set while restoring a remembered state onto `enabled`/`codeTable`, so
     /// the `didSet` persistence hook below doesn't re-learn the state it is
     /// itself in the middle of applying.
@@ -545,11 +578,43 @@ final class AppModel {
             // the app-activation observer below does, rather than assuming.
             Task { @MainActor in self?.toggleVietnameseFromHotKey() }
         }
+        keyFocusTracker.onFocus = { [weak self] bundleID in
+            guard let self else { return }
+            // Comparing against the value the ACTIVATION path also writes is
+            // what stops an ordinary Cmd-Tab from resetting the buffer
+            // twice: activation already reset it, so the first keystroke's
+            // AX read reporting the SAME app must be a no-op, not a second
+            // reset that would drop the first letters of the word being
+            // typed. A genuine focus change with no activation (the iTerm2
+            // panel case) gets the exact same reset semantics as an
+            // activation — and, like the async activation notification, it
+            // can land after the first keystroke in the new target.
+            if bundleID != self.keyFocusBundleID {
+                self.controller.resetBuffer()
+                self.keyFocusBundleID = bundleID
+            }
+            self.updateKeyFocusAppIsTerminal(bundleID: bundleID)
+        }
         applySwitchHotKeyRegistration()
         installSwitchKeyMonitors()
         // Re-push EngineConfig whenever macros are added/edited/imported, so
         // the running tap picks up the new rules without a restart.
         MacroStore.shared.onChange = { [weak self] in self?.pushConfig() }
+        // No activation notification fires for an app that's already
+        // frontmost when Keystone launches — seed keyFocusBundleID/
+        // keyFocusAppIsTerminal directly so a terminal that's open before
+        // launch is masked from the very first keystroke, not only after the
+        // next app switch. No buffer reset needed here: nothing has been
+        // typed into the just-created engine yet.
+        let launchBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        keyFocusBundleID = launchBundleID
+        updateKeyFocusAppIsTerminal(bundleID: launchBundleID)
+        // A floating panel that's ALREADY the one accepting keyboard input
+        // at launch (e.g. iTerm2's hotkey window, summoned before Keystone
+        // even started) never fires an activation notification either — the
+        // AX read below is what actually catches that case; the NSWorkspace
+        // seed above is only ever the cheap fast-path.
+        requestKeyFocusRefresh()
         // Reset the composing buffer when the frontmost app changes, and (when
         // smart-switch and/or per-app code table is on) learn/restore that
         // app's input state — all off the hot path (E.7 / §7.1), since this
@@ -717,13 +782,63 @@ final class AppModel {
         PerAppStore.shared.reset()
     }
 
+    /// Recomputes `keyFocusAppIsTerminal` for `bundleID` — the app NSWorkspace
+    /// activation just reported, the bootstrap-time NSWorkspace seed, or an
+    /// AX focus read from `keyFocusTracker` — and, only when it actually
+    /// flips, pushes `EngineConfig`. An ordinary switch between two
+    /// non-terminal apps (or two terminals), or an AX re-check that just
+    /// reconfirms the same app is still focused, must not rebuild
+    /// `EngineConfig`/`MacroTable` every time this is called.
+    private func updateKeyFocusAppIsTerminal(bundleID: String?) {
+        let isTerminal = TerminalApps.isTerminal(bundleID: bundleID)
+        guard isTerminal != keyFocusAppIsTerminal else { return }
+        keyFocusAppIsTerminal = isTerminal
+        pushConfig()
+    }
+
+    /// The AX focus read (`keyFocusTracker`) only matters while some
+    /// capitalization path can actually fire —
+    /// `TerminalApps.capitalizationCanFire` mirrors `EngineController.handle`'s
+    /// own gate, including whether Vietnamese itself is on (inactive routes
+    /// capitalization differently — see that function's doc comment). With
+    /// the defaults (`autoCapitalize` OFF, macros OFF) this gate is false, so
+    /// Keystone makes no AX attribute reads / no AX requests to other apps —
+    /// a consequence of the gate, not a hardcoded guarantee. Not cached: it
+    /// depends on toggles that can change mid-session, and it's only ever
+    /// consulted from `requestKeyFocusRefresh()`, never on the tap's hot path.
+    private var needsKeyFocusTracking: Bool {
+        accessibilityTrusted && TerminalApps.capitalizationCanFire(
+            vietnameseEnabled: enabled,
+            autoCapitalize: autoCapitalize,
+            macrosEnabled: macrosEnabled,
+            macroAutoCapitalize: macroAutoCapitalize,
+            macrosExpandWhenVietnameseOff: macrosExpandWhenVietnameseOff
+        )
+    }
+
+    /// Asks `keyFocusTracker` to re-check which app is accepting keyboard
+    /// input, subject to `needsKeyFocusTracking`'s gate. Called from every
+    /// switch-key global-monitor input event (`installSwitchKeyMonitors()`)
+    /// and once at bootstrap — see DECISIONS.md "Floating panels follow
+    /// keyboard focus, not activation".
+    private func requestKeyFocusRefresh() {
+        guard needsKeyFocusTracking else { return }
+        keyFocusTracker.requestRefresh()
+    }
+
     /// Handles `NSWorkspace.didActivateApplicationNotification`: always
-    /// resets the composing buffer, then — when the newly-activated app is a
-    /// real other app (not `nil`, not Keystone's own windows) and at least
-    /// one smart-switch toggle is on — saves the state we're leaving behind
-    /// and restores whatever was learned for the app we're entering.
+    /// resets the composing buffer, records `newBundleID` as the last known
+    /// key-focus app (so the AX tracker path doesn't reset a second time for
+    /// the same switch — see `keyFocusTracker.onFocus` in `bootstrap()`) and
+    /// re-evaluates `keyFocusAppIsTerminal`, then — when the newly-activated
+    /// app is a real other app (not `nil`, not Keystone's own windows) and
+    /// at least one smart-switch toggle is on — saves the state we're
+    /// leaving behind and restores whatever was learned for the app we're
+    /// entering.
     private func handleAppActivation(newBundleID: String?) {
         controller.resetBuffer()
+        keyFocusBundleID = newBundleID
+        updateKeyFocusAppIsTerminal(bundleID: newBundleID)
 
         guard
             let newBundleID,
@@ -790,12 +905,30 @@ final class AppModel {
         switchKeyGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: Self.switchKeyMonitoredEvents) { [weak self] event in
             let type = event.type
             let modifiers = ModifierSet(nsEventFlags: event.modifierFlags)
-            MainActor.assumeIsolated { self?.handleSwitchKeyEvent(type: type, modifiers: modifiers) }
+            MainActor.assumeIsolated {
+                self?.handleSwitchKeyEvent(type: type, modifiers: modifiers)
+                // Every keystroke/click delivered to ANOTHER app is also a
+                // signal that key focus may have moved — including into a
+                // non-activating floating panel that never fires
+                // NSWorkspace.didActivateApplicationNotification.
+                self?.requestKeyFocusRefresh()
+            }
         }
         switchKeyLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: Self.switchKeyMonitoredEvents) { [weak self] event in
             let type = event.type
             let modifiers = ModifierSet(nsEventFlags: event.modifierFlags)
-            MainActor.assumeIsolated { self?.handleSwitchKeyEvent(type: type, modifiers: modifiers) }
+            MainActor.assumeIsolated {
+                self?.handleSwitchKeyEvent(type: type, modifiers: modifiers)
+                // A non-activating floating panel can take key focus while
+                // Keystone itself is still the active app — clicking back
+                // into one of Keystone's OWN windows fires no activation
+                // notification either, so without this the terminal mask
+                // (and the AX-path reset-on-focus-change above) would stay
+                // stuck on whatever last had AX focus. The AX read landing
+                // on Keystone's own element is safe here: it still runs on
+                // the main thread (see KeyFocusTracker).
+                self?.requestKeyFocusRefresh()
+            }
             return event
         }
     }
@@ -929,11 +1062,17 @@ final class AppModel {
             quickTelex: quickTelex,
             macrosEnabled: macrosEnabled,
             macrosExpandWhenVietnameseOff: macrosExpandWhenVietnameseOff,
-            macroAutoCapitalize: macroAutoCapitalize,
+            macroAutoCapitalize: macroAutoCapitalize && !keyFocusAppIsTerminal,
             macros: MacroStore.shared.macros.map { $0.toRule() },
             quickStartConsonant: quickStartConsonant,
             quickEndConsonant: quickEndConsonant,
-            autoCapitalize: autoCapitalize,
+            // A terminal has no sentences, and capitalizing the first word
+            // breaks commands/Tab-completion ("gi"+Tab → "Gi") — mask both
+            // auto-capitalize paths off while the app accepting keyboard
+            // input is one. Only the engine-facing value is masked; the
+            // user's stored setting (`autoCapitalize`/`macroAutoCapitalize`)
+            // is untouched.
+            autoCapitalize: autoCapitalize && !keyFocusAppIsTerminal,
             allowFreeToneMark: allowFreeToneMark,
             freeMarkAcrossCoda: freeMarkAcrossCoda,
             literalAfterCancel: literalAfterCancel,
