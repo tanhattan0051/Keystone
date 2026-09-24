@@ -258,7 +258,9 @@ list surfaces the decode error instead of silently wiping the list.
 
 **autoCapitalize semantics, and why it's dormant.** `Engine` tracks
 `atSentenceStart`: `.`, `!`, `?`, and newline boundaries start a new
-sentence; committing any word (via any other boundary) ends it. A macro's
+sentence (a `.`/`!`/`?` only once whitespace confirms it — see "Auto-capitalize:
+dấu kết câu phải có khoảng trắng theo sau" below); committing any word (via
+any other boundary) ends it. A macro's
 replacement gets its first character uppercased only when ALL of: the
 per-macro `MacroRule.autoCapitalize` is on, the global
 `EngineConfig.macroAutoCapitalize` is on, the cursor is at a sentence start,
@@ -483,7 +485,9 @@ knowledge of cursor context), so the feature stays opt-in. Separately,
 now sets `atSentenceStart = false` instead of `true`: a reset has no actual
 information that the next word starts a sentence, so it must not
 auto-capitalize it. Only a real sentence terminator (`.`/`!`/`?`/newline)
-seen by `updateSentenceStart` sets it back to `true`. A brand-new `Engine`'s
+seen by `updateSentenceStart` sets it back to `true` (refined below:
+`.`/`!`/`?` now also need whitespace after them — see "Auto-capitalize: dấu
+kết câu phải có khoảng trắng theo sau"). A brand-new `Engine`'s
 stored-property initial value is untouched (still `true`), so a fresh
 engine's very first word is still treated as sentence-initial — this is what
 the existing `AutoCapitalizeTests` suite (fresh engines) relies on.
@@ -518,6 +522,66 @@ Covered by `EngineTogglesTests.swift`'s `AutoCapitalizeAfterNewline` suite
 Enter capitalizes the word that follows it; behavior is a no-op with
 `autoCapitalize` off) and `TranslatorTests.swift` (`keyCode 36`/`76` →
 `.commitNewline`, `keyCode 48` (Tab) still `.commitPassthrough`).
+
+## Auto-capitalize: dấu kết câu phải có khoảng trắng theo sau
+
+**Bug:** any `.`/`!`/`?` was a sentence boundary the instant it was typed,
+even glued to the next word — `"readme.m"` + Tab gave `"readme.M"`;
+`"google.com "` → `"google.Com "`; `"obj.method("` → `"obj.Method("`. Macro
+`autoCapitalize` shared the same bug in both Vietnamese and English mode
+(one shared tracker).
+
+**Fix:** a tri-state `SentencePosition` (`.midSentence` / `.afterTerminator`
+/ `.sentenceStart`, `Sources/KeystoneEngine/SentencePosition.swift`) replaces
+`atSentenceStart: Bool`. `after(boundary:committedWord:)`: a committed word
+collapses to `.midSentence` (cancelling a pending terminator too); `nil`
+(flush/Tab/arrows) leaves the state as-is; a newline always goes to
+`.sentenceStart`; `.`/`!`/`?` always opens `.afterTerminator`; whitespace
+promotes a pending `.afterTerminator` to `.sentenceStart`; a letter or digit
+glued onto it cancels it back to `.midSentence`; anything else (quotes,
+brackets, markdown closers `*`, `_`, `` ` ``, `~`, "," "-" "(" "|" ...) is
+transparent. `Engine.atSentenceStart` is now computed over
+`sentencePosition`; the one new wire is `process`'s `rawKeys.isEmpty` early
+return also calling `updateSentenceStart`, the path the confirming space
+after a "." takes.
+
+**Deliberate behavior changes** (this fix's side effects, not bugs):
+- Telex `nawm 2020. tieeps` → "Năm 2020. Tiếp" (was "tiếp"), matching English mode.
+- after Enter `...vaf` → "...và" (was "...Và") and `.gitignore` stays lowercase
+  (was ".Gitignore").
+- Telex `hoa. 3.14 lan` → "Hoa. 3.14 lan" (was "Lan": the "." inside the number
+  opens the window and the digit cancels it).
+- `hoa.<Tab>lan` → lowercase "lan" (was "Lan") — Tab/arrows/Escape carry no
+  character, deliberately conservative (Tab may be focus change or shell completion).
+
+**Accepted limitations:** the rule is simply "terminator + whitespace =
+sentence end" (the UniKey/OpenKey-style behavior Tân asked for; not verified
+against those apps). Telling an abbreviation apart would need a dictionary, so
+"e.g. x" → "e.g. X" (was "e.G. X") and "TP. hcm" → "TP. Hcm". A
+comma/semicolon/colon right after the terminator is transparent too, so
+"e.g., x" → "e.g., X" (was "e.G., X" — only the glued "g" changed). A Telex
+sentence opening with a bare number still capitalizes the next word:
+`hoa. 3 lan` → "Hoa. 3 Lan" (unchanged). A passthrough Backspace over the
+terminator or over the confirming space is invisible to the engine.
+
+**Tests:** `SentencePositionTests.swift` covers `after` in isolation; the
+`AutoCapitalizeTerminatorNeedsWhitespace` suite in `EngineTogglesTests.swift`
+covers the engine wiring (bug repros, VNI, markdown closers, Tab/reset/newline
+pins).
+
+## Auto-capitalize: resetInactive() cũng xoá vị trí đầu câu
+
+`Engine.reset()` (active-mode `.resetPassthrough`, plus mouse clicks, app
+switches and deactivation in both modes) already reset `sentencePosition` to
+`.midSentence`, but `resetInactive()` — English mode's `.resetPassthrough`,
+i.e. a Cmd/Ctrl/Option chord such as Cmd+V or Option+← — only cleared
+`englishRawKeys`. So such a chord right after `"hoa."` still left a pending
+terminator standing, and on a fresh engine the initial `.sentenceStart`, and
+`" md"` / `"md"` after it expanded the `md` macro as `"Markdown"` instead of
+`"markdown"`. A reset key carries no information that the next word starts a
+sentence, so `resetInactive()` now also sets `sentencePosition =
+.midSentence`, same as `reset()`. Covered by `EngineTogglesTests.swift`'s
+`EnglishModeResetClearsSentenceStart` suite.
 
 ## Onboarding / permissions (Phase 4)
 
