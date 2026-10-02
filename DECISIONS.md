@@ -2346,10 +2346,12 @@ It changes two places:
 2. `finalize(boundary:)`, inside the existing restore branch
    (`restoreIfInvalid && !isValid && compHasVowel`), checked BEFORE the old
    decision: a kept literal is decided by the new pure
-   `RestoreDecision.chooseAfterCancel(raw:lexicon:)` — `.raw` iff
-   `lexicon.contains(raw)`, else `.composed`. The force-English branch before
-   it is untouched and still wins first. Everything else still goes through
-   `RestoreDecision.choose` unchanged.
+   `RestoreDecision.chooseAfterCancel(raws:lexicon:)` — `.raw` iff the
+   lexicon contains ANY of the candidate raw spellings, else `.composed`. The
+   caller passes two: the `ww`/`ddd`-collapsed `rawWord` (what the raw revert
+   renders) and the keystrokes exactly as typed, `String(rawKeys)`. The
+   force-English branch before it is untouched and still wins first.
+   Everything else still goes through `RestoreDecision.choose` unchanged.
 
 **Why `chooseAfterCancel` is not `choose`.** `choose` asks "is the composed
 word the real one?" and so needs the composed word IN the dictionary
@@ -2409,19 +2411,22 @@ applies to the kept literal (`unssuspend ` at a sentence start → `Unsuspend `)
   `restoreIfInvalid` + the lexicon); the mid-word half does, because that is the
   eager restore itself.
 
+**Why both raw spellings are consulted.** The collapsed `rawWord` alone
+misses a real word that contains the `ww` escape: `arrowweed` collapses to
+`arroweed`, which is not a word, so the cancelled literal (`arowweed`) would
+beat the raw restore. The uncollapsed keystrokes alone would miss the other
+direction (`wwin` meant as `win`; the collapsed `win` is the word). Either one
+being a dictionary word means "the raw keystrokes are a real word", and the raw
+OUTPUT is still `revertToRawUnits()` as before. `CancelKeepsLiteralWwEscape`
+pins `arrowweed`, `arrowwood`, `arrowworm` and `sparrowwort` to their
+pre-change output (`arroweed`, `arrowood`, `arroworm`, `sparrowort`: still not
+the dictionary spelling, because of the older `ww` collapse, which is a
+separate limitation).
+
 **Natural-typing sweep.** The same throwaway method as the Phase 6 sweep (every
 lowercase-alphabetic word of `/usr/share/dict/words`, 210,773 words, typed
 straight through `Engine` with that list as the lexicon, old engine vs. new,
-final output after Space) changes the result of 4 words, and of no other:
-`arrowweed`, `arrowwood`, `arrowworm`, `sparrowwort`. Every natural-typed
-dictionary word has its raw spelling in the dictionary, so `chooseAfterCancel`
-picks `.raw`, which is what the old rule picked too. These four are the
-exception because they contain both a tone-key double (`rr`) and the `ww`
-horn escape: `finalize` looks the COLLAPSED raw word up (`rawWord`, `ww` → `w`),
-so `arroweed` is not a dictionary word, and the cancelled literal now wins
-(`arowweed`) where the raw restore used to (`arroweed`). Both outputs were
-already wrong, because the `ww` collapse corrupts these words either way, so no
-word that committed correctly before changes. Looking up the uncollapsed
-keystrokes (`String(rawKeys)`) instead gives 0 differences; that was not done
-because `choose` and the revert branch use the same collapsed `rawWord`.
-Only the unlisted-word and mid-word cases above otherwise differ.
+final output after Space) shows 0 differences: the two outputs are
+byte-identical. Every natural-typed dictionary word has its typed spelling in
+the dictionary, so `chooseAfterCancel` picks `.raw`, which is what the old rule
+picked too. Only the unlisted-word and mid-word cases above differ from before.

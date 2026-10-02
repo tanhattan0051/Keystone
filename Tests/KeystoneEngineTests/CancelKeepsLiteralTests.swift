@@ -173,17 +173,63 @@ struct CancelKeepsLiteralVNITests {
     }
 }
 
+// MARK: - A dictionary word with a tone-key double AND the ww escape
+
+@Suite("CancelKeepsLiteralWwEscape")
+struct CancelKeepsLiteralWwEscapeTests {
+    // These words contain both a cancel-shaped double (`rr`) and the `ww`
+    // horn escape. `finalize` reverts to the ww-COLLAPSED raw word, which is
+    // not in the dictionary, but the keystrokes the user actually typed are.
+    // The commit must treat that as "raw is a real word" and keep today's
+    // output, not let the cancelled literal drop an `r` on top of the `ww`
+    // collapse. Expected strings are the output BEFORE this feature (captured
+    // from the old engine in a dictionary sweep); they are already not the
+    // dictionary spelling because of the ww collapse, which is a separate,
+    // older limitation.
+    private let wwLex = Lexicon(["arrowweed", "arrowwood", "arrowworm", "sparrowwort"])
+
+    @Test(arguments: [
+        ("arrowweed", "arroweed "),
+        ("arrowwood", "arrowood "),
+        ("arrowworm", "arroworm "),
+        ("sparrowwort", "sparrowort "),
+    ])
+    func uncollapsedKeystrokesInTheDictionaryKeepTheRawRestore(word: String, expected: String) {
+        #expect(typeThroughEngine(word + " ", config: on, lexicon: wwLex) == expected)
+    }
+
+    @Test func withoutTheDictionaryEntryTheCancelledLiteralWins() {
+        // Same keystrokes, word NOT listed: nothing says the raw keys are a
+        // word, so the cancelled literal (`r` dropped, ww kept) is committed.
+        #expect(typeThroughEngine("arrowweed ", config: on, lexicon: lex) == "arowweed ")
+    }
+}
+
 // MARK: - The pure commit decision
 
 @Suite("RestoreDecisionChooseAfterCancel")
 struct RestoreDecisionChooseAfterCancelTests {
-    @Test func rawWinsOnlyWhenTheRawKeysAreADictionaryWord() {
-        #expect(RestoreDecision.chooseAfterCancel(raw: "class", lexicon: lex) == .raw)
-        #expect(RestoreDecision.chooseAfterCancel(raw: "classs", lexicon: lex) == .composed)
-        #expect(RestoreDecision.chooseAfterCancel(raw: "unssuspend", lexicon: lex) == .composed)
+    @Test func rawWinsOnlyWhenARawSpellingIsADictionaryWord() {
+        #expect(RestoreDecision.chooseAfterCancel(raws: ["class"], lexicon: lex) == .raw)
+        #expect(RestoreDecision.chooseAfterCancel(raws: ["classs"], lexicon: lex) == .composed)
+        #expect(RestoreDecision.chooseAfterCancel(raws: ["unssuspend"], lexicon: lex) == .composed)
+    }
+
+    @Test func anyCandidateBeingAWordIsEnough() {
+        // The collapsed spelling is not a word, the uncollapsed one is (and
+        // the other way round): either makes the raw keystrokes a real word.
+        let l = Lexicon(["arrowweed", "wwin"])
+        #expect(RestoreDecision.chooseAfterCancel(raws: ["arroweed", "arrowweed"], lexicon: l) == .raw)
+        #expect(RestoreDecision.chooseAfterCancel(raws: ["arrowweed", "arroweed"], lexicon: l) == .raw)
+        #expect(RestoreDecision.chooseAfterCancel(raws: ["win", "wwin"], lexicon: l) == .raw)
+        #expect(RestoreDecision.chooseAfterCancel(raws: ["win", "wwiin"], lexicon: l) == .composed)
+    }
+
+    @Test func noCandidatesMeansComposed() {
+        #expect(RestoreDecision.chooseAfterCancel(raws: [], lexicon: lex) == .composed)
     }
 
     @Test func lookupIsCaseInsensitive() {
-        #expect(RestoreDecision.chooseAfterCancel(raw: "CLASS", lexicon: lex) == .raw)
+        #expect(RestoreDecision.chooseAfterCancel(raws: ["CLASS"], lexicon: lex) == .raw)
     }
 }

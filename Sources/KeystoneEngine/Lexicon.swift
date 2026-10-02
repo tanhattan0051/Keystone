@@ -122,8 +122,8 @@ public enum RestoreDecision {
 
     /// The commit-time decision for a word whose tone/mark was CANCELLED by a
     /// same-key double-strike and carries no tone or quality mark any more
-    /// (`Engine.keepsCancelledLiteral`): `.raw` iff the raw keystrokes are
-    /// themselves a dictionary word, otherwise `.composed`.
+    /// (`Engine.keepsCancelledLiteral`): `.raw` iff ANY of the candidate raw
+    /// spellings `raws` is a dictionary word, otherwise `.composed`.
     ///
     /// Why this is not `choose`: that rule asks "is the composed word the real
     /// one?", which needs the composed word to be IN the dictionary. Here the
@@ -136,8 +136,15 @@ public enum RestoreDecision {
     /// subsequence guard (unlike `choose`): the composed literal is already on
     /// the screen and the user pressed the cancel key on purpose, so what is
     /// on screen is kept.
-    public static func chooseAfterCancel(raw: String, lexicon: Lexicon) -> RestoreChoice {
-        lexicon.contains(raw) ? .raw : .composed
+    ///
+    /// Why a list of spellings: the caller passes both the `ww`/`ddd`-collapsed
+    /// raw word (what the raw revert would render) and the keystrokes exactly
+    /// as typed. A real word that contains the `ww` escape (`arrowweed`) is
+    /// only recognised by the uncollapsed spelling, and a word typed with an
+    /// escape the user meant (`wwin` for `win`) only by the collapsed one.
+    /// Keeping the candidates a parameter keeps this function pure.
+    public static func chooseAfterCancel(raws: [String], lexicon: Lexicon) -> RestoreChoice {
+        raws.contains { lexicon.contains($0) } ? .raw : .composed
     }
 
     /// True iff `needle` can be produced from `haystack` by deleting zero or

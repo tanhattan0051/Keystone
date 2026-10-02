@@ -371,10 +371,12 @@ public final class Engine {
             // instead: the user's own cancel key already picked the composed
             // literal, so it wins unless the raw keystrokes are a real word
             // (`class`), whether or not the composed word is in the dictionary
-            // (`unssuspend` -> `unsuspend`).
+            // (`unssuspend` -> `unsuspend`). Both the ww/ddd-collapsed `rawWord`
+            // and the keystrokes as typed are consulted: a real word with the
+            // `ww` escape inside (`arrowweed`) is only found by the latter.
             let choice: RestoreChoice
             if keepsCancelledLiteral(comp), let lexicon {
-                choice = RestoreDecision.chooseAfterCancel(raw: rawWord, lexicon: lexicon)
+                choice = RestoreDecision.chooseAfterCancel(raws: [rawWord, String(rawKeys)], lexicon: lexicon)
             } else {
                 choice = RestoreDecision.choose(composed: composedWordU, raw: rawWord, lexicon: lexicon)
             }
