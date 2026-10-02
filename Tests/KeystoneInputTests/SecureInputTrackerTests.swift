@@ -71,11 +71,11 @@ struct SecureInputTrackerTests {
 
     @Test func statusMessageNamesTheHolder() {
         #expect(SecureInputTracker.statusMessage(holder: "Google Chrome")
-            == "Google Chrome đang bật nhập bảo mật (ô mật khẩu) — thoát ô/tab đó để gõ tiếng Việt")
+            == "Google Chrome đang bật nhập bảo mật (ô mật khẩu) — thoát ô/tab đó để gõ tiếp tiếng Việt")
     }
 
     @Test func statusMessageWithoutHolderIsGeneric() {
         #expect(SecureInputTracker.statusMessage(holder: nil)
-            == "Một ứng dụng đang bật nhập bảo mật (ô mật khẩu) — thoát ô/tab đó để gõ tiếng Việt")
+            == "Một ứng dụng đang bật nhập bảo mật (ô mật khẩu) — thoát ô/tab đó để gõ tiếp tiếng Việt")
     }
 }

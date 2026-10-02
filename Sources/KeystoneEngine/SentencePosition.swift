@@ -59,9 +59,10 @@ struct SentencePosition: Equatable {
     /// "(Lan", "- Mục" are unaffected.
     var isSentenceStart: Bool { settled == .sentenceStart && pending == nil && !gluedToText }
 
-    /// The position after one boundary character (`nil` for a flush —
-    /// Tab/arrows/Escape — which carries no character of its own), given
-    /// whether that boundary also committed a word.
+    /// The position after one boundary character (`nil` for a flush — Tab or
+    /// Escape, which carry no character of their own; the arrows go through
+    /// `flushCaretMove()`, which passes `nil` here and then forgets the
+    /// position itself), given whether that boundary also committed a word.
     func after(boundary: Character?, committedWord: Bool) -> SentencePosition {
         // The committed word was already judged against the OLD `self` by
         // `finalize` (that decided whether IT capitalized); from here on it
@@ -75,9 +76,11 @@ struct SentencePosition: Equatable {
             : self
 
         guard let ch = boundary else {
-            // Tab/arrows/Escape carry no character of their own: documented
+            // Tab/Escape carry no character of their own: documented
             // "Tab neither confirms nor cancels" — a stray focus change or
             // shell completion shouldn't flip capitalization either way.
+            // (Arrows also arrive here as `nil`, but `flushCaretMove()` resets
+            // the position right after, because the caret has moved.)
             return s
         }
 

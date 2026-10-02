@@ -200,8 +200,10 @@ public final class Engine {
         }
     }
 
-    /// Boundary handler for nav/commit keys (Return/Tab/arrows/...), which
-    /// carry no character of their own to gate on.
+    /// Boundary handler for the plain nav/commit keys (Tab/Escape/...), which
+    /// carry no character of their own to gate on. Return and the arrows have
+    /// their own methods (`flushInactiveNewline()`/`flushInactiveCaretMove()`)
+    /// because they also change `sentencePosition`.
     public func flushInactive() -> EngineResult {
         matchEnglishMacro(boundary: nil)
     }

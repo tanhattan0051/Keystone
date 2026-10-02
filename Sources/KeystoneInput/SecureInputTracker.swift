@@ -52,6 +52,6 @@ public struct SecureInputTracker: Sendable, Equatable {
     /// what to do (leave that field/tab), not how to bypass anything.
     public static func statusMessage(holder: String?) -> String {
         let subject = holder ?? "Một ứng dụng"
-        return "\(subject) đang bật nhập bảo mật (ô mật khẩu) — thoát ô/tab đó để gõ tiếng Việt"
+        return "\(subject) đang bật nhập bảo mật (ô mật khẩu) — thoát ô/tab đó để gõ tiếp tiếng Việt"
     }
 }

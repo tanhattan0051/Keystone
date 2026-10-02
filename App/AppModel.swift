@@ -975,10 +975,18 @@ final class AppModel {
     /// callback wired in `bootstrap()`).
     @MainActor
     private func toggleVietnameseFromHotKey() {
+        // Sample now: the 1.5 s poll can be stale in either direction (a ⌃⇧
+        // right after leaving a password field would be ignored, one right
+        // after entering it would be honored). Cheap, and on the main actor,
+        // never on the tap.
+        refreshSecureInput()
         // Under Secure Input the user is typing blind to us, and a ⌃⇧ pressed
-        // there is not a deliberate V/E switch — one such press is what wrote
-        // "Chrome = English" into per-app memory. Ignore it; the menu's
-        // "Gõ tiếng Việt" toggle (a deliberate mouse action) still works.
+        // there is not a deliberate V/E switch. SUSPECTED, not verified: a
+        // blind ⌃⇧ is what wrote "Chrome = English" into per-app memory (it is
+        // unknown whether flagsChanged reaches the monitors under Secure Input,
+        // and Chrome=E was already learned before the 13:02 window). This guard
+        // is defence-in-depth either way. Ignore it; the menu's "Gõ tiếng Việt"
+        // toggle (a deliberate mouse action) still works.
         guard !secureInputActive else {
             Self.log.info("switch key ignored: Secure Input is on")
             return

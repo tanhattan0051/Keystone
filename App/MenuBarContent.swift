@@ -23,16 +23,17 @@ struct MenuBarContent: View {
             // Live status so you can confirm the tap is actually running.
             if model.accessibilityTrusted {
                 Label("Accessibility: đã cấp", systemImage: "checkmark.seal.fill")
-                if model.tapRunning {
-                    if model.secureInputActive {
-                        // The tap is blind while Secure Input is on, so the
-                        // usual "Đang gõ…" line would be misleading.
-                        Label(SecureInputTracker.statusMessage(holder: model.secureInputHolder),
-                              systemImage: "lock.fill")
-                    } else {
-                        Label(model.enabled ? "Đang gõ tiếng Việt" : "Đang tạm tắt (EN)",
-                              systemImage: model.enabled ? "keyboard.fill" : "keyboard")
-                    }
+                if model.secureInputActive {
+                    // The tap is blind while Secure Input is on, so the usual
+                    // "Đang gõ…" line would be misleading. Checked BEFORE
+                    // `tapRunning` so the lock line shows whatever the tap
+                    // reports (whether it stays "running" during Secure Input
+                    // is unverified), like the menu-bar icon does.
+                    Label(SecureInputTracker.statusMessage(holder: model.secureInputHolder),
+                          systemImage: "lock.fill")
+                } else if model.tapRunning {
+                    Label(model.enabled ? "Đang gõ tiếng Việt" : "Đang tạm tắt (EN)",
+                          systemImage: model.enabled ? "keyboard.fill" : "keyboard")
                 } else if model.needsRelaunch {
                     Label("Cần khởi động lại để nhận quyền", systemImage: "exclamationmark.triangle.fill")
                     Button("Khởi động lại Keystone") { model.relaunch() }

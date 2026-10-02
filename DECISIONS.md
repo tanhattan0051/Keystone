@@ -570,8 +570,11 @@ before that word ever commits. See
 `after(boundary:committedWord:)`: a committed word collapses the state to
 `.midSentence` + glued (cancelling any pending terminator — it was already
 judged against the OLD state by `finalize`, so "readme.md", ".gitignore" and
-"...và" stay lowercase); `nil` (Tab/arrows/Escape flush) leaves the state
-exactly as-is; a newline always goes to `.sentenceStart`; a `.`/`!`/`?` opens
+"...và" stay lowercase); `nil` (a Tab/Escape flush) leaves the state
+exactly as-is (arrows/Home/End/PageUp/PageDown also flush with `nil`, but
+through `flushCaretMove()`, which then forgets the position — see
+"Auto-capitalize: quên vị trí câu sau Backspace / phím di chuyển con trỏ"); a
+newline always goes to `.sentenceStart`; a `.`/`!`/`?` opens
 `pending` — `.confirmable` if `gluedToText` was true, `.unconfirmable`
 otherwise (a run like "?!"/"..." inherits the FIRST terminator's kind);
 whitespace promotes a `.confirmable` pending to `.sentenceStart`, or
@@ -2358,9 +2361,13 @@ keyboard focus from 13:03:45 to 13:04:44 and Secure Input stayed on until
 For that whole stretch macOS hid every keystroke from CGEventTaps, so Vietnamese failed
 in Chrome AND Discord, and Keystone showed nothing (the menu bar still said
 `V`). Earlier that day, at 10:16:41 and 10:16:44, WindowServer had logged
-`CPS: Denying … because secureTextInput is active`. Worse, a blind ⌃⇧ pressed
-during that window toggled `enabled` and wrote "Chrome = English" into per-app
-memory, to be restored the next time Chrome was activated.
+`CPS: Denying … because secureTextInput is active`. Separately,
+`appstates.json` had learned "Chrome = English" at some point between 09-26 and
+09-28 (BEFORE the 13:02 window), which forced English on every Chrome
+activation. A ⌃⇧ pressed blind under Secure Input is the SUSPECTED cause, not an
+established one: whether `flagsChanged` reaches the NSEvent monitors and Carbon
+hot keys while Secure Input is on is unverified, and the learning could have
+happened in an earlier episode.
 
 **Rule.** Keystone does NOT try to bypass Secure Input; it is a macOS security
 feature. It only makes the state visible and stops damaging itself:
@@ -2371,7 +2378,10 @@ feature. It only makes the state visible and stops damaging itself:
    `handleAppActivation`. While on, the menu bar shows `lock.fill` instead of
    `V`/`E`, and the menu's status line becomes
    `SecureInputTracker.statusMessage(holder:)` ("… đang bật nhập bảo mật (ô mật
-   khẩu) — thoát ô/tab đó để gõ tiếng Việt") instead of "Đang gõ tiếng Việt".
+   khẩu) — thoát ô/tab đó để gõ tiếp tiếng Việt") instead of "Đang gõ tiếng Việt".
+   The lock line shows whenever `secureInputActive` and Accessibility is
+   granted, ahead of the `tapRunning` / `needsRelaunch` / starting states (it
+   is unverified whether the tap keeps reporting "running" under Secure Input).
 2. **Name the app, once.** `kCGSSessionSecureInputPID` was checked twice on
    this Mac and always reports the CURRENT frontmost app, not the real holder,
    so it is useless for attribution: reading it while the user is in Discord
@@ -2386,8 +2396,12 @@ feature. It only makes the state visible and stops damaging itself:
    so anything buffered is stale and must not be emitted when Secure Input ends.
 4. **Ignore the switch key while on** (`toggleVietnameseFromHotKey`, which both
    the modifier-only detector and the Carbon hot-key path go through). A ⌃⇧
-   typed blind is not a deliberate V/E switch. The menu's "Gõ tiếng Việt"
-   toggle is a mouse action and keeps working.
+   typed blind is not a deliberate V/E switch; this is defence-in-depth against
+   the suspected cause above, and harmless if that suspicion is wrong. The guard
+   calls `refreshSecureInput()` first, so it never acts on a sample up to 1.5 s
+   old (a deliberate ⌃⇧ right after leaving the password field must not be
+   swallowed by a stale "on"). The menu's "Gõ tiếng Việt" toggle is a mouse
+   action and keeps working.
 5. **Do not learn per-app V/E while on**: `persistPerAppStateIfNeeded()` is
    guarded, and `handleAppActivation` skips saving the state of the app being
    left. It still updates `currentBundleID` and still RESTORES the entered
