@@ -130,3 +130,90 @@ struct EngineControllerEnglishModeMacrosTests {
         #expect(typeInactive("brb ", config: config) == "brb ")
     }
 }
+
+// MARK: - Auto-capitalize forgets the sentence position after a passthrough
+// Backspace or a caret move (DECISIONS.md "Auto-capitalize: quên vị trí câu
+// sau Backspace / phím di chuyển con trỏ").
+
+private let LEFT_ARROW = RawKey(keyCode: 123, chars: "")
+private let TAB = RawKey(keyCode: 48, chars: "")
+
+/// Feeds each element through `controller.handle` and applies it with
+/// `applyRealistically`. A `String` element is typed key by key; a `RawKey`
+/// is a single special key (arrow, Tab, Backspace).
+private enum Step {
+    case keys(String)
+    case key(RawKey)
+}
+
+private func run(_ controller: EngineController, _ steps: [Step]) -> String {
+    var acc: [Unicode.Scalar] = []
+    for step in steps {
+        switch step {
+        case .keys(let text):
+            for ch in text { applyRealistically(controller.handle(letter(ch)), to: &acc) }
+        case .key(let key):
+            applyRealistically(controller.handle(key), to: &acc)
+        }
+    }
+    return String(String.UnicodeScalarView(acc))
+}
+
+@Suite("EngineControllerAutoCapitalizeForgetsAfterEdit")
+struct EngineControllerAutoCapitalizeForgetsAfterEditTests {
+    private let on = EngineConfig(autoCapitalize: true)
+
+    @Test func arrowKeyForgetsTheSentenceStartAndIsNotSuppressed() {
+        let c = EngineController(config: on)
+        var acc: [Unicode.Scalar] = []
+        for ch in "hoa. " { applyRealistically(c.handle(letter(ch)), to: &acc) }
+        let arrow = c.handle(LEFT_ARROW)
+        #expect(arrow.decision == .commitCaretMove)
+        #expect(arrow.suppress == false)   // the arrow must still reach the app
+        applyRealistically(arrow, to: &acc)
+        for ch in "lan " { applyRealistically(c.handle(letter(ch)), to: &acc) }
+        #expect(String(String.UnicodeScalarView(acc)) == "Hoa. lan ")
+    }
+
+    @Test func passthroughBackspaceForgetsThePendingTerminator() {
+        // "hoa." leaves a confirmable "."; the Backspace deletes it on screen
+        // behind the engine's back (nothing composing => not suppressed).
+        let c = EngineController(config: on)
+        let text = run(c, [.keys("hoa."), .key(BACKSPACE), .keys(", lan ")])
+        #expect(text == "Hoa, lan ")
+    }
+
+    @Test func tabStillNeitherConfirmsNorCancels() {
+        let c = EngineController(config: on)
+        let text = run(c, [.keys("hoa. "), .key(TAB), .keys("lan ")])
+        #expect(text == "Hoa. Lan ")
+    }
+
+    // -- Vietnamese off (English-mode macros) --------------------------
+
+    private let macroConfig = EngineConfig(
+        macrosEnabled: true, macrosExpandWhenVietnameseOff: true,
+        macros: [MacroRule(trigger: "md", replacement: "markdown",
+                            expandInEnglishMode: true, autoCapitalize: true)])
+
+    @Test func inactiveArrowKeyForgetsTheSentenceStart() {
+        let c = EngineController(config: macroConfig)
+        c.setActive(false)
+        let text = run(c, [.keys("end. "), .key(LEFT_ARROW), .keys("md ")])
+        #expect(text == "end. markdown ")
+    }
+
+    @Test func inactivePassthroughBackspaceForgetsThePendingTerminator() {
+        let c = EngineController(config: macroConfig)
+        c.setActive(false)
+        let text = run(c, [.keys("end."), .key(BACKSPACE), .keys(", md ")])
+        #expect(text == "end, markdown ")
+    }
+
+    @Test func inactiveTabStillNeitherConfirmsNorCancels() {
+        let c = EngineController(config: macroConfig)
+        c.setActive(false)
+        let text = run(c, [.keys("end. "), .key(TAB), .keys("md ")])
+        #expect(text == "end. Markdown ")
+    }
+}

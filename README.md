@@ -119,7 +119,12 @@ Cùng với **self-tag** chống xử lý lại chính event mình sinh ra, **kh
 - **Bỏ dấu cuối từ** *(mặc định bật):* cho dấu vượt qua cả phụ âm cuối — `trene → trên`,
   `dadng → đang`. Đánh đổi có chủ đích: vài từ tiếng Anh (`mama`, `dad`) có thể bị hiểu thành tiếng
   Việt (có cảnh báo trong Bảng điều khiển).
-- **Tự viết hoa đầu câu** *(mặc định tắt)* — tự tắt trong các app Terminal (Terminal, iTerm2, Warp, Ghostty, kitty…) để không làm hỏng lệnh và Tab-complete.
+- **Tự viết hoa đầu câu** *(mặc định tắt)* — tự tắt trong các app Terminal (Terminal, iTerm2, Warp,
+  Ghostty, kitty…) để không làm hỏng lệnh và Tab-complete. Sau một lần Backspace xoá ký tự mà bộ gõ
+  không theo dõi, hoặc sau phím mũi tên / Home / End / PageUp / PageDown, bộ gõ không còn biết gì đứng
+  trước con trỏ nên không tự viết hoa từ kế tiếp; gõ lại dấu kết câu rồi cách ra thì vẫn viết hoa
+  bình thường (xem DECISIONS.md "Auto-capitalize: quên vị trí câu sau Backspace / phím di chuyển con
+  trỏ").
 
 ### Gõ tắt & macro
 

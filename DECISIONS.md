@@ -482,9 +482,11 @@ engine), out of step with `EngineConfig`'s own OFF default above — it is now
 Sentence-start detection is unreliable in a system-wide IME (no real
 knowledge of cursor context), so the feature stays opt-in. Separately,
 `Engine.reset()` — called on a mouse click, an app switch/keyboard-focus
-change, a Cmd/Ctrl/Option chord, and deactivation (arrows, Home/End,
-PageUp/PageDown, Tab and Escape all go through `flush()` instead, which
-keeps the position as-is) — now sets `atSentenceStart = false` instead of
+change, a Cmd/Ctrl/Option chord, and deactivation (Tab and Escape still go
+through `flush()`, which keeps the position as-is; arrows, Home/End and
+PageUp/PageDown now go through `flushCaretMove()`, which also resets it —
+see "Auto-capitalize: quên vị trí câu sau Backspace / phím di chuyển con
+trỏ") — now sets `atSentenceStart = false` instead of
 `true`: a reset has no actual information that the next word starts a
 sentence, so it must not auto-capitalize it. Only a real sentence terminator
 (`.`/`!`/`?`/newline)
@@ -518,7 +520,9 @@ edit text — the physical Return key already inserts the newline via
 passthrough) and then force `atSentenceStart = true`. Other commit keys
 (Tab/arrows/Home/End/PageUp/PageDown/Escape) stay `.commitPassthrough` and do
 NOT start a new sentence — only Return/KeypadEnter carry real "new line"
-information.
+information. (Arrows/Home/End/PageUp/PageDown were later split out again, into
+`.commitCaretMove` — see "Auto-capitalize: quên vị trí câu sau Backspace / phím
+di chuyển con trỏ".)
 
 Covered by `EngineTogglesTests.swift`'s `AutoCapitalizeAfterNewline` suite
 (newline re-capitalizes after a mid-sentence word; a `- ` bullet right after
@@ -685,11 +689,13 @@ comma/semicolon/colon right after the terminator is transparent too, so
 "e.g., x" → "e.g., X" (was "e.G., X" — only the glued "g" changed). A
 passthrough Backspace over ANY single character the engine doesn't see
 directly — the terminator itself, the confirming whitespace, or a cancelling
-digit — is invisible to the engine, same as any other passthrough Backspace.
-A pending terminator survives Tab/arrow keys (`flush` keeps the state
-as-is), so moving the caret back into already-typed text after "tôi học."
-and typing " đã" can still give "Đã" — pre-existing, unchanged by this fix,
-awaiting Tân's decision. There is no dedicated "=" rule (deleted — see
+digit — and the arrow/Home/End/PageUp/PageDown keys now reset the sentence
+position to `.afterReset` (no capital by itself; a terminator typed next can
+still confirm), per Tân's decision — see "Auto-capitalize: quên vị trí câu
+sau Backspace / phím di chuyển con trỏ" below. Tab, Escape and ForwardDelete
+still keep the state as-is (`flush`; "Tab neither confirms nor cancels"), so a
+pending terminator survives them: "tôi học." + Tab + " đã" can still give
+"Đã". There is no dedicated "=" rule (deleted — see
 below): a terminator glued to a word on ONE side but followed by whitespace
 on the other is indistinguishable from a real "word. Word" sentence end, so
 asymmetric spacing capitalizes: `a!= b` → "a!= B", `a?= b` → "a?= B".
@@ -765,6 +771,56 @@ it's `.afterReset` today: the next word right after either reset still does
 not capitalize on its own either way).
 Covered by `EngineTogglesTests.swift`'s `EnglishModeResetClearsSentenceStart`
 suite.
+
+## Auto-capitalize: quên vị trí câu sau Backspace / phím di chuyển con trỏ
+
+**Bug:** with `autoCapitalize` on, `xong.` + Backspace + `, các` gave
+"xong, Các". The engine never sees what a passthrough Backspace deleted or
+where an arrow key moved the caret, so a stale `sentencePosition` survived:
+the "." the Backspace removed was still pending and the following " "
+confirmed it (`"xong. "` + 2 Backspaces + `", các"` did the same from a
+confirmed sentence start). `Return` + Backspace had it too: the `\n` is gone
+but the engine still believed it sat at a line start. Arrow keys were the
+same problem from the other side — the caret lands in text the engine never
+saw. This was listed under "Accepted limitations … awaiting Tân's decision"
+in "Auto-capitalize: dấu kết câu phải có khoảng trắng theo sau"; he decided.
+
+**Rule:** when the engine cannot know what precedes the caret, it uses
+`.afterReset` — exactly what `reset()` already does, with the same reasoning
+(see `SentencePosition.afterReset`): no auto-capital by itself, but a
+terminator typed next plus whitespace still confirms, so `hoa.` + Backspace +
+`. lan ` → "hoa. Lan ".
+
+**What triggers it:**
+- **Passthrough Backspace**: `Engine.process(.backspace)` with nothing
+  composing (`rawKeys.isEmpty`), and `processInactive(.backspace)` with an empty
+  English buffer. The physical Delete still passes through (both return
+  `.none`). A Backspace with a composing word / non-empty English buffer is
+  engine-owned and unchanged — the engine sees exactly what it removes, so
+  `chaof. ban` + Backspace + `nj ` still gives "Chào. Bạn".
+- **Caret-moving keys**: new `KeyDecision.commitCaretMove` for the arrows
+  (123-126), Home (115), End (119), PageUp (116) and PageDown (121).
+  `EngineController` routes it to the new `Engine.flushCaretMove()` (active) /
+  `flushInactiveCaretMove()` (English-mode macros): `finalize(boundary: nil)` /
+  `matchEnglishMacro(boundary: nil)` first, so the composing word still
+  commits, then `sentencePosition = .afterReset`. The key itself is not
+  suppressed, same as `.commitPassthrough`.
+
+**What deliberately does NOT:** Tab, Escape and ForwardDelete stay
+`.commitPassthrough`. The documented "Tab neither confirms nor cancels" stays
+(Tab may be a focus change or shell completion), and ForwardDelete removes
+what FOLLOWS the caret, so what precedes it is unchanged. Modifier chords
+(Option+Left, ...) were already `.resetPassthrough`.
+
+**Accepted trade-off:** a Backspace that deletes something harmless still
+forgets a real sentence start — `xong. ` + Backspace + a re-typed " " + `cacs`
+gives "các", not "Các". A missed capital is the safe side, same as after a
+reset; retyping the terminator confirms again.
+
+Covered by `Tests/KeystoneEngineTests/AutoCapitalizeForgetsAfterEditTests.swift`
+(a screen simulator where a Backspace the engine doesn't own deletes one
+on-screen character, as the real app does), `TranslatorTests.swift` and
+`EngineControllerTests.swift` (arrow not suppressed; Tab unchanged).
 
 ## Không tự viết hoa trong Terminal
 

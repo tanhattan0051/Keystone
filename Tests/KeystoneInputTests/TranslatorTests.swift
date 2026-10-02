@@ -45,11 +45,32 @@ struct TranslatorTests {
     }
 
     @Test func arrowLeft() {
-        #expect(KeyTranslator.decide(RawKey(keyCode: 123, chars: "")) == .commitPassthrough)
+        // Arrows move the caret to text the engine never saw, so they also
+        // make it forget the sentence position — see `.commitCaretMove`.
+        #expect(KeyTranslator.decide(RawKey(keyCode: 123, chars: "")) == .commitCaretMove)
+    }
+
+    @Test func caretMoveKeysForgetTheSentencePosition() {
+        // Left, Right, Down, Up, Home, End, PageUp, PageDown.
+        for keyCode in [123, 124, 125, 126, 115, 119, 116, 121] {
+            #expect(KeyTranslator.decide(RawKey(keyCode: keyCode, chars: "")) == .commitCaretMove,
+                    "keyCode \(keyCode)")
+        }
     }
 
     @Test func escape() {
         #expect(KeyTranslator.decide(RawKey(keyCode: 53, chars: "")) == .commitPassthrough)
+    }
+
+    @Test func forwardDeleteStaysCommitPassthrough() {
+        // ForwardDelete never changes what PRECEDES the caret, so the sentence
+        // position is still trustworthy after it.
+        #expect(KeyTranslator.decide(RawKey(keyCode: 117, chars: "")) == .commitPassthrough)
+    }
+
+    @Test func caretMoveWithAModifierIsStillAReset() {
+        // Option+Left (word jump) is a chord: the modifier check comes first.
+        #expect(KeyTranslator.decide(RawKey(keyCode: 123, option: true, chars: "")) == .resetPassthrough)
     }
 
     @Test func cmdAIsAShortcut() {

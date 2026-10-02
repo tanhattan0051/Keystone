@@ -86,7 +86,17 @@ public final class Engine {
     public func process(_ key: KeyInput) -> EngineResult {
         switch key.kind {
         case .backspace:
-            if rawKeys.isEmpty { return .none }
+            if rawKeys.isEmpty {
+                // Nothing composing, so this is a passthrough Delete: it removes
+                // an on-screen character the engine never saw (maybe the "."
+                // that made `sentencePosition` pending, maybe the "\n" that
+                // made it a sentence start). What now precedes the caret is
+                // unknown, so fall back to `.afterReset` — see DECISIONS.md
+                // "Auto-capitalize: quên vị trí câu sau Backspace / phím di
+                // chuyển con trỏ".
+                sentencePosition = .afterReset
+                return .none
+            }
             rawKeys.removeLast()
             return rerender()
         case .character(let ch):
@@ -125,6 +135,18 @@ public final class Engine {
         return r
     }
 
+    /// Arrows/Home/End/PageUp/PageDown: finalize the current word like
+    /// `flush()`, but ALSO set `sentencePosition = .afterReset` — the caret
+    /// now sits somewhere the engine has never seen, so what precedes it is
+    /// unknown (no auto-capital by itself, but a terminator typed next can
+    /// still confirm). Tab/Escape/ForwardDelete keep using plain `flush()`:
+    /// they leave what precedes the caret alone.
+    public func flushCaretMove() -> EngineResult {
+        let r = finalize(boundary: nil)
+        sentencePosition = .afterReset
+        return r
+    }
+
     public func reset() {
         rawKeys = []; prevUnits = []
         // `.afterReset`, NOT `.sentenceStart`: a reset fires on a mouse
@@ -158,7 +180,14 @@ public final class Engine {
     public func processInactive(_ key: KeyInput) -> EngineResult {
         switch key.kind {
         case .backspace:
-            if !englishRawKeys.isEmpty { englishRawKeys.removeLast() }
+            if englishRawKeys.isEmpty {
+                // The physical Delete removes a character the engine never
+                // tracked (see `process(.backspace)`), so forget the position.
+                // A non-empty buffer means it only edits the word being typed.
+                sentencePosition = .afterReset
+            } else {
+                englishRawKeys.removeLast()
+            }
             return .none   // the physical Delete always passes through
         case .character(let ch):
             if ch.isLetter || ch.isNumber {
@@ -183,6 +212,15 @@ public final class Engine {
     public func flushInactiveNewline() -> EngineResult {
         let r = matchEnglishMacro(boundary: nil)
         sentencePosition = .sentenceStart
+        return r
+    }
+
+    /// English-mode counterpart of `flushCaretMove()`: matches/clears the
+    /// macro buffer like `flushInactive()`, then sets
+    /// `sentencePosition = .afterReset` — see `flushCaretMove()`'s doc comment.
+    public func flushInactiveCaretMove() -> EngineResult {
+        let r = matchEnglishMacro(boundary: nil)
+        sentencePosition = .afterReset
         return r
     }
 
