@@ -3,6 +3,7 @@
 import SwiftUI
 import AppKit
 import KeystoneEngine
+import KeystoneInput
 
 struct MenuBarContent: View {
     @Bindable var model: AppModel
@@ -23,8 +24,15 @@ struct MenuBarContent: View {
             if model.accessibilityTrusted {
                 Label("Accessibility: đã cấp", systemImage: "checkmark.seal.fill")
                 if model.tapRunning {
-                    Label(model.enabled ? "Đang gõ tiếng Việt" : "Đang tạm tắt (EN)",
-                          systemImage: model.enabled ? "keyboard.fill" : "keyboard")
+                    if model.secureInputActive {
+                        // The tap is blind while Secure Input is on, so the
+                        // usual "Đang gõ…" line would be misleading.
+                        Label(SecureInputTracker.statusMessage(holder: model.secureInputHolder),
+                              systemImage: "lock.fill")
+                    } else {
+                        Label(model.enabled ? "Đang gõ tiếng Việt" : "Đang tạm tắt (EN)",
+                              systemImage: model.enabled ? "keyboard.fill" : "keyboard")
+                    }
                 } else if model.needsRelaunch {
                     Label("Cần khởi động lại để nhận quyền", systemImage: "exclamationmark.triangle.fill")
                     Button("Khởi động lại Keystone") { model.relaunch() }

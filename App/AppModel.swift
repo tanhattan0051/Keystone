@@ -25,6 +25,7 @@
 
 import SwiftUI
 import AppKit
+import Carbon.HIToolbox   // IsSecureEventInputEnabled()
 import Observation
 import os
 import ServiceManagement
@@ -431,6 +432,18 @@ final class AppModel {
     /// only honors a fresh Accessibility grant after the process relaunches.
     private(set) var needsRelaunch = false
 
+    /// macOS Secure Input is on system-wide, so the tap receives NO keystrokes
+    /// and Vietnamese can't work in any app until its holder leaves the
+    /// field/tab. Mirrors `secureInputTracker` for the UI; polled by
+    /// `refreshSecureInput()`. Lives here, not in the tap's `SystemStateCache`,
+    /// because a blind tap can't be the one to report it. See DECISIONS.md
+    /// "Secure Input: phát hiện và báo".
+    private(set) var secureInputActive = false
+    /// Best guess at the app that turned Secure Input on (the frontmost app at
+    /// the moment it began — never re-attributed while it stays on).
+    private(set) var secureInputHolder: String?
+    private var secureInputTracker = SecureInputTracker()
+
     /// True until Accessibility is trusted (the hard requirement for the tap)
     /// or the user has explicitly finished/dismissed onboarding once — drives
     /// the auto-open-at-launch behavior in `performLaunchOpenIfNeeded()`.
@@ -836,6 +849,7 @@ final class AppModel {
     /// leaving behind and restores whatever was learned for the app we're
     /// entering.
     private func handleAppActivation(newBundleID: String?) {
+        refreshSecureInput()
         controller.resetBuffer()
         keyFocusBundleID = newBundleID
         updateKeyFocusAppIsTerminal(bundleID: newBundleID)
@@ -850,7 +864,10 @@ final class AppModel {
             return
         }
 
-        if let oldBundleID = currentBundleID {
+        // While Secure Input is on the user can't toggle V/E reliably (the
+        // switch key is ignored, see toggleVietnameseFromHotKey), so what we'd
+        // "save" for the app being left is not a real preference of theirs.
+        if !secureInputActive, let oldBundleID = currentBundleID {
             PerAppStore.shared.remember(currentInputState, for: oldBundleID)
         }
         currentBundleID = newBundleID
@@ -872,7 +889,8 @@ final class AppModel {
     /// one we're applying ourselves via `handleAppActivation`) is learned for
     /// the current app immediately, not only on the next app switch.
     private func persistPerAppStateIfNeeded() {
-        guard !applyingPerAppState, perAppTrackingOn, let bundleID = currentBundleID else { return }
+        guard !applyingPerAppState, !secureInputActive, perAppTrackingOn,
+              let bundleID = currentBundleID else { return }
         PerAppStore.shared.remember(currentInputState, for: bundleID)
     }
 
@@ -957,6 +975,14 @@ final class AppModel {
     /// callback wired in `bootstrap()`).
     @MainActor
     private func toggleVietnameseFromHotKey() {
+        // Under Secure Input the user is typing blind to us, and a ⌃⇧ pressed
+        // there is not a deliberate V/E switch — one such press is what wrote
+        // "Chrome = English" into per-app memory. Ignore it; the menu's
+        // "Gõ tiếng Việt" toggle (a deliberate mouse action) still works.
+        guard !secureInputActive else {
+            Self.log.info("switch key ignored: Secure Input is on")
+            return
+        }
         enabled.toggle()
         if switchKeyBeep { NSSound.beep() }
     }
@@ -1087,7 +1113,30 @@ final class AppModel {
         tap.updateBehavior(InputBehavior(sendEachKeystroke: sendEachKeystroke, textOnKeyDownOnly: autoFixSuggestion))
     }
 
+    /// Samples `IsSecureEventInputEnabled()` (system-wide, works from an
+    /// unprivileged process) and the frontmost app, and mirrors the result for
+    /// the UI. Keystone only reports this — bypassing Secure Input is not
+    /// something it may do. The buffer is reset on `.began` because keys typed
+    /// from here on never reach the engine, so anything buffered is stale.
+    private func refreshSecureInput() {
+        let change = secureInputTracker.update(
+            isEnabled: IsSecureEventInputEnabled(),
+            frontmostAppName: NSWorkspace.shared.frontmostApplication?.localizedName
+        )
+        guard let change else { return }
+        secureInputActive = secureInputTracker.isActive
+        secureInputHolder = secureInputTracker.holder
+        switch change {
+        case .began(let holder):
+            controller.resetBuffer()
+            Self.log.info("Secure Input began (frontmost: \(holder ?? "unknown", privacy: .public))")
+        case .ended:
+            Self.log.info("Secure Input ended")
+        }
+    }
+
     private func refresh() {
+        refreshSecureInput()
         accessibilityTrusted = Permissions.isAccessibilityTrusted()
         inputMonitoring = Permissions.inputMonitoringGranted()
 

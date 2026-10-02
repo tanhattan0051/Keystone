@@ -148,6 +148,12 @@ Cùng với **self-tag** chống xử lý lại chính event mình sinh ra, **kh
   trùng thao tác thường dùng (shift-click, ⌘-click…); có kèm phím thì đăng ký hẳn với hệ thống
   (Carbon) để phím đó không lọt ra ứng dụng khác. Kêu bíp khi chuyển *(tuỳ chọn, mặc định tắt)*.
 - **Chỉ báo V/E** ngay trên menu bar.
+- **Báo nhập bảo mật (Secure Input):** khi một ứng dụng bật chế độ nhập bảo mật của macOS (ô mật
+  khẩu, hoặc một tab trình duyệt như trang đăng nhập), hệ thống giấu mọi phím khỏi Keystone nên gõ
+  tiếng Việt tạm thời không hoạt động ở bất kỳ ứng dụng nào. Menu bar khi đó hiện **🔒** thay cho
+  V/E, và menu ghi tên ứng dụng nghi ngờ cùng cách xử lý. Keystone chỉ báo chứ không tìm cách
+  vượt qua cơ chế bảo mật này; lúc đó phím chuyển Việt/Anh cũng bị bỏ qua và trạng thái V/E theo
+  ứng dụng không bị ghi nhớ nhầm.
 - **Khởi động cùng macOS** *(mặc định tắt, `SMAppService`)*, **hiện icon trên Dock** *(mặc định
   tắt)*, **mở Bảng điều khiển khi khởi động** *(mặc định tắt)*.
 - **Sửa lỗi gợi ý** & **Gửi từng phím** *(mặc định tắt):* né lỗi nhân đôi ký tự ở một số trình duyệt
@@ -195,6 +201,12 @@ làm theo 4 bước:
 Cửa sổ **Onboarding** tự mở lần đầu để hướng dẫn cấp quyền; nút "Bắt đầu gõ" / "Để sau" không bao
 giờ bị khoá. Nếu cấp quyền xong mà tap chưa tạo được, menu bar sẽ hiện nút **"Khởi động lại
 Keystone"**.
+
+**Đã cấp quyền mà gõ tiếng Việt vẫn không ra ở mọi ứng dụng?** Nếu menu bar đang hiện **🔒**, đó là
+nhập bảo mật của macOS (Secure Input) chứ không phải lỗi quyền: một ứng dụng đang giữ nó, thường là
+một ô mật khẩu hoặc một tab trình duyệt (ví dụ trang đăng nhập) còn mở. Mở menu để xem tên ứng dụng
+được nghi, rồi **bấm ra khỏi ô mật khẩu, hoặc rời/đóng tab đó** — Keystone tự gõ lại bình thường
+ngay sau đó. Nếu menu không nêu được tên, thử đóng các tab/cửa sổ có ô mật khẩu đang mở.
 
 ---
 

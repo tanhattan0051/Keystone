@@ -2505,3 +2505,66 @@ final output after Space) shows 0 differences: the two outputs are
 byte-identical. Every natural-typed dictionary word has its typed spelling in
 the dictionary, so `chooseAfterCancel` picks `.raw`, which is what the old rule
 picked too. Only the unlisted-word and mid-word cases above differ from before.
+
+## Secure Input: phát hiện và báo (spec §7)
+
+Design spec §7 ("Secure input mode") was written on day one and never built:
+`SystemState.secureInputActive` in `Contracts.swift` stayed `false` forever.
+It bit for real on 2026-09-28.
+
+**Evidence (2026-09-28).** At 13:02:26 Chrome, with a workplace.vietnix.vn tab
+open, turned macOS Secure Input on while it was the frontmost app. Discord had
+keyboard focus from 13:03:45 to 13:04:44 and Secure Input stayed on until
+13:04:48, right after the user went back to Chrome and left/closed that tab.
+For that whole stretch macOS hid every keystroke from CGEventTaps, so Vietnamese failed
+in Chrome AND Discord, and Keystone showed nothing (the menu bar still said
+`V`). Earlier that day, at 10:16:41 and 10:16:44, WindowServer had logged
+`CPS: Denying … because secureTextInput is active`. Worse, a blind ⌃⇧ pressed
+during that window toggled `enabled` and wrote "Chrome = English" into per-app
+memory, to be restored the next time Chrome was activated.
+
+**Rule.** Keystone does NOT try to bypass Secure Input; it is a macOS security
+feature. It only makes the state visible and stops damaging itself:
+
+1. **Show it.** `AppModel.refreshSecureInput()` samples
+   `IsSecureEventInputEnabled()` (Carbon HIToolbox; system-wide, works from an
+   unprivileged process) on the 1.5 s `refresh()` poll and at the top of
+   `handleAppActivation`. While on, the menu bar shows `lock.fill` instead of
+   `V`/`E`, and the menu's status line becomes
+   `SecureInputTracker.statusMessage(holder:)` ("… đang bật nhập bảo mật (ô mật
+   khẩu) — thoát ô/tab đó để gõ tiếng Việt") instead of "Đang gõ tiếng Việt".
+2. **Name the app, once.** `kCGSSessionSecureInputPID` was checked twice on
+   this Mac and always reports the CURRENT frontmost app, not the real holder,
+   so it is useless for attribution: reading it while the user is in Discord
+   would blame Discord. The only sound guess is the app that was frontmost at
+   the moment Secure Input turned on, so `SecureInputTracker` captures
+   `holder` at the OFF→ON transition and never refreshes it while it stays on.
+   Caveat: it is still a guess. If Secure Input starts and the user switches
+   apps within one poll interval, the holder named is the app that was
+   frontmost at the first sample that saw it. If the app name is unavailable
+   the message falls back to "Một ứng dụng …".
+3. **Reset the buffer** on `.began`: from then on no key reaches the engine,
+   so anything buffered is stale and must not be emitted when Secure Input ends.
+4. **Ignore the switch key while on** (`toggleVietnameseFromHotKey`, which both
+   the modifier-only detector and the Carbon hot-key path go through). A ⌃⇧
+   typed blind is not a deliberate V/E switch. The menu's "Gõ tiếng Việt"
+   toggle is a mouse action and keeps working.
+5. **Do not learn per-app V/E while on**: `persistPerAppStateIfNeeded()` is
+   guarded, and `handleAppActivation` skips saving the state of the app being
+   left. It still updates `currentBundleID` and still RESTORES the entered
+   app's remembered state.
+
+**Why there is no toggle.** This is a passive status plus a safety guard with
+nothing to configure: there is no legitimate reason to want the lock hidden or
+the blind toggle honored, and a setting would only be one more way to get the
+2026-09-28 failure back. A password field turning it on for a few seconds is
+normal and just shows the lock briefly (§7 asks for a subtle indicator, not a
+warning).
+
+**Why it lives in `AppModel`, not in the tap's `SystemStateCache`.** The tap is
+the one component that receives no keystrokes while Secure Input is on, so it
+cannot be the thing that reports it; and the state is read by SwiftUI and the
+per-app code, not by the tap callback. The pure decision logic is the testable
+`SecureInputTracker` in `KeystoneInput` (`SecureInputTrackerTests`); `AppModel`
+is only the thin sampler. `SystemState.secureInputActive` in `Contracts.swift`
+stays as pre-existing, unused scaffolding: it was deliberately not touched.
