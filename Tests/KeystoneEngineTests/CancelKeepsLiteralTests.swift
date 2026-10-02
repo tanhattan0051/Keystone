@@ -117,6 +117,14 @@ struct CancelKeepsLiteralTelexTests {
         #expect(typeThroughEngine("messi ", config: on, lexicon: lex) == "mesi ")
     }
 
+    @Test func dStrokeIsIgnoredLikeOpenKeyDoes() {
+        // Not a table row. Consonant cells, đ included, never count as a mark,
+        // so `dd` -> đ does not stop the rule: this word keeps the cancelled
+        // literal "đass". Before the change the raw restore gave "ddasss ".
+        // Accepted consequence of OpenKey parity, see DECISIONS.md.
+        #expect(typeThroughEngine("ddasss ", config: on, lexicon: lex) == "đass ")
+    }
+
     @Test func autoCapitalizeStillAppliesToTheKeptLiteral() {
         // Row 14.
         var cfg = on
@@ -161,15 +169,28 @@ struct CancelKeepsLiteralNotApplicableTests {
     }
 }
 
-// MARK: - Row 15: VNI
+// MARK: - Row 15: VNI is deliberately NOT covered
 
 @Suite("CancelKeepsLiteralVNI")
 struct CancelKeepsLiteralVNITests {
-    @Test func vniDigitCancelKeepsTheLiteral() {
-        // Row 15: a1 -> á, the second 1 cancels and the digit stays literal.
-        // VNI's cancel does set `Composition.cancelled` (same `.literal`
-        // signal as Telex), so this matches Telex. Before the change: "a11 ".
-        #expect(typeThroughEngine("a11 ", config: vniOn, lexicon: lex) == "a1 ")
+    // In VNI the cancel key is a DIGIT, and digits are ordinary text in words
+    // (`win11`, `ubuntu22.04`): a doubled digit there is not a cancel, so the
+    // cancelled-literal rule would eat a real digit. The rule is Telex-only,
+    // and VNI must stay byte-identical to the behavior before this feature
+    // (all three expected strings below were taken from the old engine).
+    // `Composition.cancelled` is still set by `VNI.fold`; only the Engine rule
+    // is gated.
+    @Test func vniDigitCancelStillRestoresTheRawKeys() {
+        // Row 15, re-pinned: a1 -> á, the second 1 cancels. Before AND after: "a11 ".
+        #expect(typeThroughEngine("a11 ", config: vniOn, lexicon: lex) == "a11 ")
+    }
+
+    @Test func windowsElevenKeepsItsDoubledDigit() {
+        #expect(typeThroughEngine("win11 ", config: vniOn, lexicon: lex) == "win11 ")
+    }
+
+    @Test func versionStringKeepsItsDoubledDigit() {
+        #expect(typeThroughEngine("ubuntu22.04 ", config: vniOn, lexicon: lex) == "ubuntu22.04 ")
     }
 }
 

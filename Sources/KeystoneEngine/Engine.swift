@@ -586,13 +586,21 @@ public final class Engine {
     /// is what the user chose, and restoring the raw keys would bring the
     /// cancel key back (`s u s s` -> `suss`). True iff all of:
     ///   - the cancel semantics are on and the cancel actually fired,
+    ///   - the input method is not VNI (see below),
     ///   - a lexicon is present (without one the commit-time choice between
     ///     composed and raw has nothing to decide with, so today's raw
     ///     restore stays untouched),
     ///   - no tone survives and no vowel carries a quality mark.
     /// Consonant cells (including a `dStroke` đ) are ignored, like OpenKey.
+    ///
+    /// Telex only (Simple Telex folds through Telex too). A Telex cancel key is
+    /// a letter, and a doubled tone letter is rare in real words, which the
+    /// lexicon then catches. A VNI cancel key is a DIGIT, and digits are
+    /// ordinary text (`win11`, `ubuntu22.04`): a doubled digit there is data,
+    /// not a cancel, and this rule would silently drop one of them.
+    /// `Composition.cancelled` still means "a cancel fired" in both folds.
     private func keepsCancelledLiteral(_ comp: Composition) -> Bool {
-        guard config.literalAfterCancel, lexicon != nil,
+        guard config.literalAfterCancel, config.inputMethod != .vni, lexicon != nil,
               comp.cancelled, comp.tone == .ngang else { return false }
         return !comp.cells.contains { $0.isVowel && $0.mark != .none }
     }

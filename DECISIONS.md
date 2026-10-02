@@ -1638,8 +1638,8 @@ in the lexicon" — that claim is false (see "Known limitation" below); it is
 conditions above aren't ALL met, that keeps things safe regardless of what
 is or isn't in the lexicon.
 
-**Exception, added later.** `choose` is not consulted for a word whose tone/mark
-was cancelled and that has no tone or vowel mark left (`Engine.keepsCancelledLiteral`):
+**Exception, added later (Telex only).** `choose` is not consulted for a word whose
+tone/mark was cancelled and that has no tone or vowel mark left (`Engine.keepsCancelledLiteral`):
 that case uses `RestoreDecision.chooseAfterCancel` (composed unless the raw
 keystrokes are themselves a dictionary word), so `unssuspend` commits
 `unsuspend` although `unsuspend` is not listed. See "Huỷ dấu xong giữ nguyên
@@ -1980,8 +1980,8 @@ touches `tempDisableKey` either), so typing `z` never enters literal mode.
 
 **How it composes with the lexicon restore.** `literalAfterCancel` only
 changes what gets COMPOSED; `RestoreDecision` (see above) still runs afterward
-(with one later exception: a cancelled word that has no tone or vowel mark
-left is decided by `RestoreDecision.chooseAfterCancel` instead, which keeps
+(with one later exception, Telex only: a cancelled word that has no tone or
+vowel mark left is decided by `RestoreDecision.chooseAfterCancel` instead, which keeps
 the cancelled literal even when it is not in the dictionary and keeps the
 eager restore from showing the cancel key — see "Huỷ dấu xong giữ nguyên chữ
 đã huỷ (OpenKey checkRestoreIfWrongSpelling)" below). For a word like
@@ -2139,9 +2139,9 @@ boundary commit: once a word goes dead, it stays showing its raw keystrokes
 verbatim for the rest of that word (backspacing past the dead keystroke
 naturally un-restores it too, since `rerender` always re-folds the whole of
 `rawKeys` from scratch — no separate state to unwind, same as
-`literalAfterCancel`'s `cancelled` local). One exception, added later: a dead
-word whose cancel key was just pressed and that has no tone or vowel mark left
-(`keepsCancelledLiteral`) keeps showing the composed literal (`sus`, not
+`literalAfterCancel`'s `cancelled` local). One exception, added later (Telex
+only): a dead word whose cancel key was just pressed and that has no tone or
+vowel mark left (`keepsCancelledLiteral`) keeps showing the composed literal (`sus`, not
 `suss`) — see "Huỷ dấu xong giữ nguyên chữ đã huỷ (OpenKey
 checkRestoreIfWrongSpelling)" below.
 
@@ -2327,10 +2327,11 @@ loop finds nothing and OpenKey leaves the on-screen word alone.
 
 **The rule.** `Composition` gained `cancelled: Bool` (set by `Telex.fold` and
 `VNI.fold` from their existing `cancelled` local, so it is true only when
-`literalAfterCancel` is on and a cancel actually fired). `Engine`'s private
-`keepsCancelledLiteral(_:)` is true iff ALL of:
+`literalAfterCancel` is on and a cancel actually fired, in either method).
+`Engine`'s private `keepsCancelledLiteral(_:)` is true iff ALL of:
 
 - `config.literalAfterCancel`
+- `config.inputMethod != .vni` (Telex only, see "Why Telex only" below)
 - `lexicon != nil`
 - `comp.cancelled`
 - `comp.tone == .ngang`
@@ -2377,6 +2378,20 @@ kept, which is also what OpenKey does when it leaves the word alone.
 - `comp.cancelled`: only a word the user actually cancelled is affected. A word
   with no cancel never reaches the new code, so every plain English or
   Vietnamese word is unchanged.
+- `inputMethod != .vni`: see "Why Telex only" below.
+
+**Why Telex only.** A Telex cancel key is a LETTER (`s f r x j`, or the doubled
+vowel / `d` / `w` key), and a natural double of one is rare in real words, which
+the lexicon then catches. A VNI cancel key is a DIGIT, and digits are ordinary
+text in words: with a lexicon loaded, `win11` would commit `win1` and
+`ubuntu22.04` would commit `ubuntu2.04` (the doubled digit read as a cancel and
+dropped), where before the change both were untouched. So the rule is gated
+off for VNI. Simple Telex 1/2 fold through `Telex.fold` and keep the rule.
+`VNI.fold` still sets `Composition.cancelled` (it means "a cancel fired" in
+both folds); only the Engine rule ignores it. VNI is byte-identical to before
+this feature: `a11 ` → `a11 `, `win11 ` → `win11 `, `ubuntu22.04 ` →
+`ubuntu22.04 ` (pinned by `CancelKeepsLiteralVNI`, expected strings taken from
+the old engine).
 
 **Resulting behaviour** (Telex, `restoreIfInvalid` + `literalAfterCancel` +
 `spellCheck`, lexicon with `suspend class pass message task`; pinned by
@@ -2393,9 +2408,8 @@ kept, which is also what OpenKey does when it leaves the word alone.
 | `messi` (natural double, unlisted) | | `mesi` |
 | `vieetss` (circumflex survives) | `viết` → `vieetss` | `vieetss` (unchanged) |
 
-VNI behaves the same, because `VNI.fold` also sets `cancelled` on a digit
-double-strike (`a11 ` → `a1 `; before: `a11 `). `autoCapitalize` still
-applies to the kept literal (`unssuspend ` at a sentence start → `Unsuspend `).
+`autoCapitalize` still applies to the kept literal (`unssuspend ` at a sentence
+start → `Unsuspend `). VNI is not affected at all (see "Why Telex only").
 
 **Accepted trade-offs, pinned on purpose.**
 
@@ -2407,6 +2421,11 @@ applies to the kept literal (`unssuspend ` at a sentence start → `Unsuspend `)
   (`messi` → `mesi`). This is what OpenKey does too. It is the same class as the
   "Known limitation: a real word missing from both lists" above, and has the
   same escape hatch (turn `useLexicon` or `literalAfterCancel` off).
+- Consonants are ignored by the mark check, so `dd` → `đ` does not stop the
+  rule: `ddasss ` commits `đass` (the cancelled literal, with the đ kept)
+  where the raw restore gave `ddasss`. OpenKey ignores consonant slots in
+  `checkRestoreIfWrongSpelling` as well, so this is parity, pinned by
+  `dStrokeIsIgnoredLikeOpenKeyDoes`.
 - The commit-time half does not depend on `spellCheck` (it only needs
   `restoreIfInvalid` + the lexicon); the mid-word half does, because that is the
   eager restore itself.
