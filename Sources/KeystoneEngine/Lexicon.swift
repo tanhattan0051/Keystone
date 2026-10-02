@@ -120,6 +120,26 @@ public enum RestoreDecision {
         return .composed
     }
 
+    /// The commit-time decision for a word whose tone/mark was CANCELLED by a
+    /// same-key double-strike and carries no tone or quality mark any more
+    /// (`Engine.keepsCancelledLiteral`): `.raw` iff the raw keystrokes are
+    /// themselves a dictionary word, otherwise `.composed`.
+    ///
+    /// Why this is not `choose`: that rule asks "is the composed word the real
+    /// one?", which needs the composed word to be IN the dictionary. Here the
+    /// user's own cancel key already told us they wanted the cancelled
+    /// literal, so the composed word wins even when it is missing from the
+    /// dictionary (`unssuspend` -> `unsuspend`, `unsuspend` is not a listed
+    /// word). The only thing that can overrule the cancel is the raw
+    /// keystrokes being a real word: `class`/`message`/`pass` typed naturally
+    /// contain a double letter that only LOOKS like a cancel. There is no
+    /// subsequence guard (unlike `choose`): the composed literal is already on
+    /// the screen and the user pressed the cancel key on purpose, so what is
+    /// on screen is kept.
+    public static func chooseAfterCancel(raw: String, lexicon: Lexicon) -> RestoreChoice {
+        lexicon.contains(raw) ? .raw : .composed
+    }
+
     /// True iff `needle` can be produced from `haystack` by deleting zero or
     /// more characters, keeping the remaining ones in the same relative
     /// order (a classic subsequence test) — never adding or reordering
