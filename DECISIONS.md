@@ -482,9 +482,11 @@ engine), out of step with `EngineConfig`'s own OFF default above — it is now
 Sentence-start detection is unreliable in a system-wide IME (no real
 knowledge of cursor context), so the feature stays opt-in. Separately,
 `Engine.reset()` — called on a mouse click, an app switch/keyboard-focus
-change, a Cmd/Ctrl/Option chord, and deactivation (arrows, Home/End,
-PageUp/PageDown, Tab and Escape all go through `flush()` instead, which
-keeps the position as-is) — now sets `atSentenceStart = false` instead of
+change, a Cmd/Ctrl/Option chord, and deactivation (Tab and Escape still go
+through `flush()`, which keeps the position as-is; arrows, Home/End and
+PageUp/PageDown now go through `flushCaretMove()`, which also resets it —
+see "Auto-capitalize: quên vị trí câu sau Backspace / phím di chuyển con
+trỏ") — now sets `atSentenceStart = false` instead of
 `true`: a reset has no actual information that the next word starts a
 sentence, so it must not auto-capitalize it. Only a real sentence terminator
 (`.`/`!`/`?`/newline)
@@ -518,7 +520,9 @@ edit text — the physical Return key already inserts the newline via
 passthrough) and then force `atSentenceStart = true`. Other commit keys
 (Tab/arrows/Home/End/PageUp/PageDown/Escape) stay `.commitPassthrough` and do
 NOT start a new sentence — only Return/KeypadEnter carry real "new line"
-information.
+information. (Arrows/Home/End/PageUp/PageDown were later split out again, into
+`.commitCaretMove` — see "Auto-capitalize: quên vị trí câu sau Backspace / phím
+di chuyển con trỏ".)
 
 Covered by `EngineTogglesTests.swift`'s `AutoCapitalizeAfterNewline` suite
 (newline re-capitalizes after a mid-sentence word; a `- ` bullet right after
@@ -566,8 +570,11 @@ before that word ever commits. See
 `after(boundary:committedWord:)`: a committed word collapses the state to
 `.midSentence` + glued (cancelling any pending terminator — it was already
 judged against the OLD state by `finalize`, so "readme.md", ".gitignore" and
-"...và" stay lowercase); `nil` (Tab/arrows/Escape flush) leaves the state
-exactly as-is; a newline always goes to `.sentenceStart`; a `.`/`!`/`?` opens
+"...và" stay lowercase); `nil` (a Tab/Escape flush) leaves the state
+exactly as-is (arrows/Home/End/PageUp/PageDown also flush with `nil`, but
+through `flushCaretMove()`, which then forgets the position — see
+"Auto-capitalize: quên vị trí câu sau Backspace / phím di chuyển con trỏ"); a
+newline always goes to `.sentenceStart`; a `.`/`!`/`?` opens
 `pending` — `.confirmable` if `gluedToText` was true, `.unconfirmable`
 otherwise (a run like "?!"/"..." inherits the FIRST terminator's kind);
 whitespace promotes a `.confirmable` pending to `.sentenceStart`, or
@@ -685,11 +692,13 @@ comma/semicolon/colon right after the terminator is transparent too, so
 "e.g., x" → "e.g., X" (was "e.G., X" — only the glued "g" changed). A
 passthrough Backspace over ANY single character the engine doesn't see
 directly — the terminator itself, the confirming whitespace, or a cancelling
-digit — is invisible to the engine, same as any other passthrough Backspace.
-A pending terminator survives Tab/arrow keys (`flush` keeps the state
-as-is), so moving the caret back into already-typed text after "tôi học."
-and typing " đã" can still give "Đã" — pre-existing, unchanged by this fix,
-awaiting Tân's decision. There is no dedicated "=" rule (deleted — see
+digit — and the arrow/Home/End/PageUp/PageDown keys now reset the sentence
+position to `.afterReset` (no capital by itself; a terminator typed next can
+still confirm), per Tân's decision — see "Auto-capitalize: quên vị trí câu
+sau Backspace / phím di chuyển con trỏ" below. Tab, Escape and ForwardDelete
+still keep the state as-is (`flush`; "Tab neither confirms nor cancels"), so a
+pending terminator survives them: "tôi học." + Tab + " đã" can still give
+"Đã". There is no dedicated "=" rule (deleted — see
 below): a terminator glued to a word on ONE side but followed by whitespace
 on the other is indistinguishable from a real "word. Word" sentence end, so
 asymmetric spacing capitalizes: `a!= b` → "a!= B", `a?= b` → "a?= B".
@@ -765,6 +774,56 @@ it's `.afterReset` today: the next word right after either reset still does
 not capitalize on its own either way).
 Covered by `EngineTogglesTests.swift`'s `EnglishModeResetClearsSentenceStart`
 suite.
+
+## Auto-capitalize: quên vị trí câu sau Backspace / phím di chuyển con trỏ
+
+**Bug:** with `autoCapitalize` on, `xong.` + Backspace + `, các` gave
+"xong, Các". The engine never sees what a passthrough Backspace deleted or
+where an arrow key moved the caret, so a stale `sentencePosition` survived:
+the "." the Backspace removed was still pending and the following " "
+confirmed it (`"xong. "` + 2 Backspaces + `", các"` did the same from a
+confirmed sentence start). `Return` + Backspace had it too: the `\n` is gone
+but the engine still believed it sat at a line start. Arrow keys were the
+same problem from the other side — the caret lands in text the engine never
+saw. This was listed under "Accepted limitations … awaiting Tân's decision"
+in "Auto-capitalize: dấu kết câu phải có khoảng trắng theo sau"; he decided.
+
+**Rule:** when the engine cannot know what precedes the caret, it uses
+`.afterReset` — exactly what `reset()` already does, with the same reasoning
+(see `SentencePosition.afterReset`): no auto-capital by itself, but a
+terminator typed next plus whitespace still confirms, so `hoa.` + Backspace +
+`. lan ` → "hoa. Lan ".
+
+**What triggers it:**
+- **Passthrough Backspace**: `Engine.process(.backspace)` with nothing
+  composing (`rawKeys.isEmpty`), and `processInactive(.backspace)` with an empty
+  English buffer. The physical Delete still passes through (both return
+  `.none`). A Backspace with a composing word / non-empty English buffer is
+  engine-owned and unchanged — the engine sees exactly what it removes, so
+  `chaof. ban` + Backspace + `nj ` still gives "Chào. Bạn".
+- **Caret-moving keys**: new `KeyDecision.commitCaretMove` for the arrows
+  (123-126), Home (115), End (119), PageUp (116) and PageDown (121).
+  `EngineController` routes it to the new `Engine.flushCaretMove()` (active) /
+  `flushInactiveCaretMove()` (English-mode macros): `finalize(boundary: nil)` /
+  `matchEnglishMacro(boundary: nil)` first, so the composing word still
+  commits, then `sentencePosition = .afterReset`. The key itself is not
+  suppressed, same as `.commitPassthrough`.
+
+**What deliberately does NOT:** Tab, Escape and ForwardDelete stay
+`.commitPassthrough`. The documented "Tab neither confirms nor cancels" stays
+(Tab may be a focus change or shell completion), and ForwardDelete removes
+what FOLLOWS the caret, so what precedes it is unchanged. Modifier chords
+(Option+Left, ...) were already `.resetPassthrough`.
+
+**Accepted trade-off:** a Backspace that deletes something harmless still
+forgets a real sentence start — `xong. ` + Backspace + a re-typed " " + `cacs`
+gives "các", not "Các". A missed capital is the safe side, same as after a
+reset; retyping the terminator confirms again.
+
+Covered by `Tests/KeystoneEngineTests/AutoCapitalizeForgetsAfterEditTests.swift`
+(a screen simulator where a Backspace the engine doesn't own deletes one
+on-screen character, as the real app does), `TranslatorTests.swift` and
+`EngineControllerTests.swift` (arrow not suppressed; Tab unchanged).
 
 ## Không tự viết hoa trong Terminal
 
@@ -2288,3 +2347,77 @@ untouched; a tone-key double ("boss") never involves d at all. So `dddos`→`ddo
 `dddong`→`ddong`, while every existing restore is unchanged. Pinned by
 `DStrokeEscapeTests.swift`. (`ddos` typed with two d's still composes to `đó` —
 that homograph is inherent and unchanged.)
+
+## Secure Input: phát hiện và báo (spec §7)
+
+Design spec §7 ("Secure input mode") was written on day one and never built:
+`SystemState.secureInputActive` in `Contracts.swift` stayed `false` forever.
+It bit for real on 2026-09-28.
+
+**Evidence (2026-09-28).** At 13:02:26 Chrome, with a workplace.vietnix.vn tab
+open, turned macOS Secure Input on while it was the frontmost app. Discord had
+keyboard focus from 13:03:45 to 13:04:44 and Secure Input stayed on until
+13:04:48, right after the user went back to Chrome and left/closed that tab.
+For that whole stretch macOS hid every keystroke from CGEventTaps, so Vietnamese failed
+in Chrome AND Discord, and Keystone showed nothing (the menu bar still said
+`V`). Earlier that day, at 10:16:41 and 10:16:44, WindowServer had logged
+`CPS: Denying … because secureTextInput is active`. Separately,
+`appstates.json` had learned "Chrome = English" at some point between 09-26 and
+09-28 (BEFORE the 13:02 window), which forced English on every Chrome
+activation. A ⌃⇧ pressed blind under Secure Input is the SUSPECTED cause, not an
+established one: whether `flagsChanged` reaches the NSEvent monitors and Carbon
+hot keys while Secure Input is on is unverified, and the learning could have
+happened in an earlier episode.
+
+**Rule.** Keystone does NOT try to bypass Secure Input; it is a macOS security
+feature. It only makes the state visible and stops damaging itself:
+
+1. **Show it.** `AppModel.refreshSecureInput()` samples
+   `IsSecureEventInputEnabled()` (Carbon HIToolbox; system-wide, works from an
+   unprivileged process) on the 1.5 s `refresh()` poll and at the top of
+   `handleAppActivation`. While on, the menu bar shows `lock.fill` instead of
+   `V`/`E`, and the menu's status line becomes
+   `SecureInputTracker.statusMessage(holder:)` ("… đang bật nhập bảo mật (ô mật
+   khẩu) — thoát ô/tab đó để gõ tiếp tiếng Việt") instead of "Đang gõ tiếng Việt".
+   The lock line shows whenever `secureInputActive` and Accessibility is
+   granted, ahead of the `tapRunning` / `needsRelaunch` / starting states (it
+   is unverified whether the tap keeps reporting "running" under Secure Input).
+2. **Name the app, once.** `kCGSSessionSecureInputPID` was checked twice on
+   this Mac and always reports the CURRENT frontmost app, not the real holder,
+   so it is useless for attribution: reading it while the user is in Discord
+   would blame Discord. The only sound guess is the app that was frontmost at
+   the moment Secure Input turned on, so `SecureInputTracker` captures
+   `holder` at the OFF→ON transition and never refreshes it while it stays on.
+   Caveat: it is still a guess. If Secure Input starts and the user switches
+   apps within one poll interval, the holder named is the app that was
+   frontmost at the first sample that saw it. If the app name is unavailable
+   the message falls back to "Một ứng dụng …".
+3. **Reset the buffer** on `.began`: from then on no key reaches the engine,
+   so anything buffered is stale and must not be emitted when Secure Input ends.
+4. **Ignore the switch key while on** (`toggleVietnameseFromHotKey`, which both
+   the modifier-only detector and the Carbon hot-key path go through). A ⌃⇧
+   typed blind is not a deliberate V/E switch; this is defence-in-depth against
+   the suspected cause above, and harmless if that suspicion is wrong. The guard
+   calls `refreshSecureInput()` first, so it never acts on a sample up to 1.5 s
+   old (a deliberate ⌃⇧ right after leaving the password field must not be
+   swallowed by a stale "on"). The menu's "Gõ tiếng Việt" toggle is a mouse
+   action and keeps working.
+5. **Do not learn per-app V/E while on**: `persistPerAppStateIfNeeded()` is
+   guarded, and `handleAppActivation` skips saving the state of the app being
+   left. It still updates `currentBundleID` and still RESTORES the entered
+   app's remembered state.
+
+**Why there is no toggle.** This is a passive status plus a safety guard with
+nothing to configure: there is no legitimate reason to want the lock hidden or
+the blind toggle honored, and a setting would only be one more way to get the
+2026-09-28 failure back. A password field turning it on for a few seconds is
+normal and just shows the lock briefly (§7 asks for a subtle indicator, not a
+warning).
+
+**Why it lives in `AppModel`, not in the tap's `SystemStateCache`.** The tap is
+the one component that receives no keystrokes while Secure Input is on, so it
+cannot be the thing that reports it; and the state is read by SwiftUI and the
+per-app code, not by the tap callback. The pure decision logic is the testable
+`SecureInputTracker` in `KeystoneInput` (`SecureInputTrackerTests`); `AppModel`
+is only the thin sampler. `SystemState.secureInputActive` in `Contracts.swift`
+stays as pre-existing, unused scaffolding: it was deliberately not touched.

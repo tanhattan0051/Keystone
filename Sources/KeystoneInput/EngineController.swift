@@ -72,6 +72,10 @@ public final class EngineController: @unchecked Sendable {
                     let r = engine.flushInactive()
                     let noop = r.backspaceCount == 0 && r.text.isEmpty
                     return (false, noop ? nil : r, d)
+                case .commitCaretMove:
+                    let r = engine.flushInactiveCaretMove()
+                    let noop = r.backspaceCount == 0 && r.text.isEmpty
+                    return (false, noop ? nil : r, d)
                 case .commitNewline:
                     let r = engine.flushInactiveNewline()
                     let noop = r.backspaceCount == 0 && r.text.isEmpty
@@ -116,6 +120,10 @@ public final class EngineController: @unchecked Sendable {
                 let r = engine.flush()
                 let noop = r.backspaceCount == 0 && r.text.isEmpty
                 return (false, noop ? nil : r, d)   // finalize word, but let the nav key pass through
+            case .commitCaretMove:
+                let r = engine.flushCaretMove()
+                let noop = r.backspaceCount == 0 && r.text.isEmpty
+                return (false, noop ? nil : r, d)   // finalize word + forget sentence position, let the key pass through
             case .commitNewline:
                 let r = engine.flushNewline()
                 let noop = r.backspaceCount == 0 && r.text.isEmpty

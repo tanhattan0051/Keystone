@@ -67,13 +67,23 @@ private struct MenuBarLabel: View {
 
     var body: some View {
         // "V" khi đang gõ tiếng Việt, "E" khi đang ở chế độ tiếng Anh — cho
-        // thấy ngay chế độ hiện tại ngay trên menu bar.
-        Text(model.enabled ? "V" : "E")
-            .font(.system(size: 14, weight: .bold, design: .rounded))
-            .onAppear {
-                model.openWindowRequest = { id in openWindow(id: id) }
-                model.performLaunchOpenIfNeeded()
+        // thấy ngay chế độ hiện tại ngay trên menu bar. Khi macOS đang bật
+        // nhập bảo mật (Secure Input) thì bộ gõ không nhận được phím nào, nên
+        // hiện ổ khoá thay cho V/E. `.onAppear` gắn lên cả Group nên nhánh nào
+        // hiện ra cũng có nó; hai việc bên trong đều chạy một-lần/idempotent
+        // (performLaunchOpenIfNeeded có cờ didAttemptLaunchOpen).
+        Group {
+            if model.secureInputActive {
+                Image(systemName: "lock.fill")
+            } else {
+                Text(model.enabled ? "V" : "E")
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
             }
+        }
+        .onAppear {
+            model.openWindowRequest = { id in openWindow(id: id) }
+            model.performLaunchOpenIfNeeded()
+        }
     }
 }
 
