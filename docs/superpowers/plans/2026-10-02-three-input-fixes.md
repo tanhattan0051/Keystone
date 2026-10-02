@@ -4,6 +4,13 @@ Approved by Tân Tạ on 2026-10-02 ("oke em làm cả 3 luôn đi"). No separat
 requirements are this plan's Global Constraints plus each task's "Required behavior". The evidence
 behind each task is summarized in its "Why" paragraph.
 
+> **Outcome (2026-10-02):** Tasks 2 and 3 shipped on this branch. Task 1 was implemented, then
+> REVERTED (commit ccee5a9) after the final whole-branch review. On real English prose it dropped a
+> letter from correctly typed words the lexicon lacks (messages→mesages, processing→procesing,
+> diff→dif; about 1 word in 160). The "0 of 210,773" sweep could not see this, because it only typed
+> words already in the lexicon. A redesign follows in its own plan. Its acceptance bar: natural-typing
+> accuracy on a real-prose corpus ≥ main, and OpenKey-habit accuracy > main.
+
 ## Global Constraints
 
 - Swift 6 package at the repo root. Tests use Swift Testing (`import Testing`, `@Suite`, `@Test`,
