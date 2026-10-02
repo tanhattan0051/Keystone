@@ -85,19 +85,6 @@ Cùng với **self-tag** chống xử lý lại chính event mình sinh ra, **kh
   thường hoàn toàn — không còn lên dấu/thanh hay biến đổi gõ nhanh nữa — cho tới hết từ:
   `classs → class`, `tassk → task`. Công tắc riêng **"Huỷ dấu xong thì gõ tiếp chữ thường (như
   OpenKey)"** trong Bảng điều khiển; xem DECISIONS.md "OpenKey-compatible literal-after-cancel".
-  Khi từ sau khi huỷ không còn dấu thanh hay dấu mũ/móc/trăng nào (đúng như OpenKey), chữ đã huỷ
-  được **giữ nguyên trên màn hình**, phím huỷ không hiện lại: `s u s s` ra `sus` (không phải
-  `suss`), `susspend → suspend`, và cả từ không có trong từ điển cũng đúng:
-  `unssuspend → unsuspend`. Ngoại lệ duy nhất: nếu chuỗi phím thô tự nó đã là một từ trong từ điển
-  thì giữ phím thô — `class` gõ bình thường vẫn ra `class` (lúc đang gõ tạm hiện `clas`, dấu cách
-  mới chốt `class`). Đánh đổi có chủ đích, giống OpenKey: từ không có trong từ điển mà tự có hai
-  phím dấu giống nhau liền kề (`ss`, `ff`, `rr`, `xx`, `jj`... — vd `messi`) sẽ mất một chữ
-  (`mesi`); `dd → đ` không tính là dấu nên `ddasss` ra `đass`. Chỉ áp dụng cho **Telex** (kể cả
-  Simple Telex) và khi từ điển đang bật (công tắc "Giữ từ tiếng Anh đang hiển thị"); nếu từ còn dấu
-  mũ/móc (`vieetss`) thì vẫn trả về phím thô như cũ. **VNI không áp dụng:** phím huỷ của VNI là chữ
-  số, mà chữ số là chữ thường gặp trong từ (`win11`, `ubuntu22.04`), nên VNI giữ y như trước (`a11`
-  vẫn ra `a11`). Xem DECISIONS.md "Huỷ dấu xong giữ nguyên chữ đã huỷ (OpenKey
-  checkRestoreIfWrongSpelling)".
 - **Kiểm tra chính tả** *(mặc định bật):* khi từ đang gõ trở thành một âm tiết tiếng Việt "chết" —
   không cách nào gõ tiếp để thành hợp lệ được nữa (vd phụ âm cuối `ck`, `vm`... không phải phụ âm đầu
   hay cuối tiếng Việt nào) — chữ thô sẽ hiện ra NGAY khi đang gõ thay vì đợi đến khi gõ dấu cách:

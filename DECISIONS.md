@@ -1694,13 +1694,6 @@ in the lexicon" — that claim is false (see "Known limitation" below); it is
 conditions above aren't ALL met, that keeps things safe regardless of what
 is or isn't in the lexicon.
 
-**Exception, added later (Telex only).** `choose` is not consulted for a word whose
-tone/mark was cancelled and that has no tone or vowel mark left (`Engine.keepsCancelledLiteral`):
-that case uses `RestoreDecision.chooseAfterCancel` (composed unless the raw
-keystrokes are themselves a dictionary word), so `unssuspend` commits
-`unsuspend` although `unsuspend` is not listed. See "Huỷ dấu xong giữ nguyên
-chữ đã huỷ (OpenKey checkRestoreIfWrongSpelling)" below.
-
 **Dormant-at-engine / enabled-by-app, the same pattern as
 `freeMarkAcrossCoda`.** `Engine.lexicon: Lexicon?` defaults `nil` — with no
 lexicon installed, `RestoreDecision.choose` always returns `.raw`, so every
@@ -2035,13 +2028,8 @@ semantics" above; OpenKey's own `removeMark()`, the `z` handler, never
 touches `tempDisableKey` either), so typing `z` never enters literal mode.
 
 **How it composes with the lexicon restore.** `literalAfterCancel` only
-changes what gets COMPOSED; `RestoreDecision` (see above) still runs afterward
-(with one later exception, Telex only: a cancelled word that has no tone or
-vowel mark left is decided by `RestoreDecision.chooseAfterCancel` instead, which keeps
-the cancelled literal even when it is not in the dictionary and keeps the
-eager restore from showing the cancel key — see "Huỷ dấu xong giữ nguyên chữ
-đã huỷ (OpenKey checkRestoreIfWrongSpelling)" below). For a word like
-`classs`, the flag alone (even with
+changes what gets COMPOSED; `RestoreDecision` (see above) is unchanged and
+still runs afterward. For a word like `classs`, the flag alone (even with
 `restoreIfInvalid` off and no lexicon) already composes the right spelling
 character-for-character, because every key after the cancel is now literal:
 `class` — nothing left to restore. For a word like `tassk`, the flag makes
@@ -2181,7 +2169,7 @@ eager version runs on every keystroke, in `Engine.rerender`:
 let comp = interpret(rawKeys)
 let table = outputTable(for: config.codeTable)
 let newUnits: [UInt16]
-if config.spellCheck && isUnrecoverable(comp) && !keepsCancelledLiteral(comp) {
+if config.spellCheck && isUnrecoverable(comp) {
     newUnits = Engine.collapseDoubledW(rawKeys).flatMap { table.plain($0) }
 } else {
     newUnits = encode(comp, table: table)
@@ -2195,11 +2183,7 @@ boundary commit: once a word goes dead, it stays showing its raw keystrokes
 verbatim for the rest of that word (backspacing past the dead keystroke
 naturally un-restores it too, since `rerender` always re-folds the whole of
 `rawKeys` from scratch — no separate state to unwind, same as
-`literalAfterCancel`'s `cancelled` local). One exception, added later (Telex
-only): a dead word whose cancel key was just pressed and that has no tone or
-vowel mark left (`keepsCancelledLiteral`) keeps showing the composed literal (`sus`, not
-`suss`) — see "Huỷ dấu xong giữ nguyên chữ đã huỷ (OpenKey
-checkRestoreIfWrongSpelling)" below.
+`literalAfterCancel`'s `cancelled` local).
 
 **The safety guarantee, and how it's proven.** The hard requirement: with
 `spellCheck` on, every REAL Vietnamese word renders byte-identical —
@@ -2360,151 +2344,6 @@ untouched; a tone-key double ("boss") never involves d at all. So `dddos`→`ddo
 `dddong`→`ddong`, while every existing restore is unchanged. Pinned by
 `DStrokeEscapeTests.swift`. (`ddos` typed with two d's still composes to `đó` —
 that homograph is inherent and unchanged.)
-
-## Huỷ dấu xong giữ nguyên chữ đã huỷ (OpenKey checkRestoreIfWrongSpelling)
-
-**Bug.** The author types English inside Vietnamese Telex with OpenKey muscle
-memory: he sees a tone appear (`s u s` → `sú`) and presses the key again to
-cancel it. `literalAfterCancel` (see "OpenKey-compatible literal-after-cancel
-(Phase 6)") already composes the right literal, but `spellCheck`'s eager
-restore (see "Eager restore (spellCheck / Phase 7)") then declared that
-composition DEAD (`sus`: coda `s` is not a coda) and rendered the RAW
-keystrokes instead, cancel key included: `suss`, then `susspend`. At the
-boundary it was the same story: `suspend` is in the dictionary, so
-`RestoreDecision.choose` rescued it at Space; `unsuspend` is not, so
-`unssuspend` committed with its extra `s`.
-
-**Reference: OpenKey's `checkRestoreIfWrongSpelling`**
-(`/Users/tanta/Downloads/OpenKey/Sources/OpenKey/engine/Engine.cpp`, ~line
-1204). It walks the typed word and restores the raw keys ONLY IF some
-non-consonant slot still carries `MARK_MASK`, `TONE_MASK` or `TONEW_MASK` (a
-tone or a quality mark). A cancel strips exactly those bits, so after one the
-loop finds nothing and OpenKey leaves the on-screen word alone.
-
-**The rule.** `Composition` gained `cancelled: Bool` (set by `Telex.fold` and
-`VNI.fold` from their existing `cancelled` local, so it is true only when
-`literalAfterCancel` is on and a cancel actually fired, in either method).
-`Engine`'s private `keepsCancelledLiteral(_:)` is true iff ALL of:
-
-- `config.literalAfterCancel`
-- `config.inputMethod != .vni` (Telex only, see "Why Telex only" below)
-- `lexicon != nil`
-- `comp.cancelled`
-- `comp.tone == .ngang`
-- every VOWEL cell has `mark == .none` (consonant cells, including a `dStroke`
-  đ, are ignored, exactly like OpenKey's `!IS_CONSONANT` filter).
-
-It changes two places:
-
-1. `rerender()`: eager restore becomes
-   `config.spellCheck && isUnrecoverable(comp) && !keepsCancelledLiteral(comp)`,
-   so the screen shows the composed literal (`sus`, `susp`, ...) instead of the
-   raw keys.
-2. `finalize(boundary:)`, inside the existing restore branch
-   (`restoreIfInvalid && !isValid && compHasVowel`), checked BEFORE the old
-   decision: a kept literal is decided by the new pure
-   `RestoreDecision.chooseAfterCancel(raws:lexicon:)` — `.raw` iff the
-   lexicon contains ANY of the candidate raw spellings, else `.composed`. The
-   caller passes two: the `ww`/`ddd`-collapsed `rawWord` (what the raw revert
-   renders) and the keystrokes exactly as typed, `String(rawKeys)`. The
-   force-English branch before it is untouched and still wins first.
-   Everything else still goes through `RestoreDecision.choose` unchanged.
-
-**Why `chooseAfterCancel` is not `choose`.** `choose` asks "is the composed
-word the real one?" and so needs the composed word IN the dictionary
-(`suspend` yes, `unsuspend` no). After a cancel the user's own keystroke has
-already said "I wanted it literal", so the composed word wins even when it is
-unlisted; the only thing that overrules a cancel is the raw keystrokes being a
-dictionary word, because `class` / `message` / `pass` typed naturally contain a
-double letter that merely LOOKS like a cancel. There is no subsequence guard
-here (that guard stops a quick-consonant rewrite such as `nike` → `niche` from
-being committed over what was typed): the composed literal is already on the
-screen and the user pressed the cancel key on purpose, so what is on screen is
-kept, which is also what OpenKey does when it leaves the word alone.
-
-**Why each clause.**
-
-- `lexicon != nil`: without a dictionary nothing can tell `classs` from
-  `class`, so the rule stays dormant and today's raw restore is byte-identical.
-  This also makes the app's `useLexicon` toggle the kill switch for the whole
-  feature (the lexicon is unloaded when it is off).
-- `tone == .ngang` and no vowel mark: OpenKey parity. A cancel that leaves a
-  quality mark (`vieetss`: the tone is cancelled but `ê` stays) is still a word
-  with Vietnamese on it, so it keeps the old raw restore (`vieetss`).
-- `comp.cancelled`: only a word the user actually cancelled is affected. A word
-  with no cancel never reaches the new code, so every plain English or
-  Vietnamese word is unchanged.
-- `inputMethod != .vni`: see "Why Telex only" below.
-
-**Why Telex only.** A Telex cancel key is a LETTER (`s f r x j`, or the doubled
-vowel / `d` / `w` key), and a natural double of one is rare in real words, which
-the lexicon then catches. A VNI cancel key is a DIGIT, and digits are ordinary
-text in words: with a lexicon loaded, `win11` would commit `win1` and
-`ubuntu22.04` would commit `ubuntu2.04` (the doubled digit read as a cancel and
-dropped), where before the change both were untouched. So the rule is gated
-off for VNI. Simple Telex 1/2 fold through `Telex.fold` and keep the rule.
-`VNI.fold` still sets `Composition.cancelled` (it means "a cancel fired" in
-both folds); only the Engine rule ignores it. VNI is byte-identical to before
-this feature: `a11 ` → `a11 `, `win11 ` → `win11 `, `ubuntu22.04 ` →
-`ubuntu22.04 ` (pinned by `CancelKeepsLiteralVNI`, expected strings taken from
-the old engine).
-
-**Resulting behaviour** (Telex, `restoreIfInvalid` + `literalAfterCancel` +
-`spellCheck`, lexicon with `suspend class pass message task`; pinned by
-`CancelKeepsLiteralTests.swift`):
-
-| keys | while typing | committed |
-|---|---|---|
-| `susspend` | `sú` → `sus` → `susp` … `suspend` | `suspend` |
-| `unssuspend` (`unsuspend` unlisted) | `ún` → `uns` → `unsu` … | `unsuspend` |
-| `classs` | … `clas` → `class` | `class` |
-| `class` (natural double) | … `cla` → `clas` | `class` (raw is a word) |
-| `message` / `messsage` | | `message` / `message` |
-| `tassk` | | `task` |
-| `messi` (natural double, unlisted) | | `mesi` |
-| `vieetss` (circumflex survives) | `viết` → `vieetss` | `vieetss` (unchanged) |
-
-`autoCapitalize` still applies to the kept literal (`unssuspend ` at a sentence
-start → `Unsuspend `). VNI is not affected at all (see "Why Telex only").
-
-**Accepted trade-offs, pinned on purpose.**
-
-- A natural double of a tone key is indistinguishable from a cancel until the
-  boundary, so `class` shows `clas` while typing and the Space restores
-  `class`: a one-letter flash, and only for a word whose raw spelling is in the
-  dictionary.
-- A natural-double word that is NOT in the dictionary loses a letter at commit
-  (`messi` → `mesi`). This is what OpenKey does too. It is the same class as the
-  "Known limitation: a real word missing from both lists" above, and has the
-  same escape hatch (turn `useLexicon` or `literalAfterCancel` off).
-- Consonants are ignored by the mark check, so `dd` → `đ` does not stop the
-  rule: `ddasss ` commits `đass` (the cancelled literal, with the đ kept)
-  where the raw restore gave `ddasss`. OpenKey ignores consonant slots in
-  `checkRestoreIfWrongSpelling` as well, so this is parity, pinned by
-  `dStrokeIsIgnoredLikeOpenKeyDoes`.
-- The commit-time half does not depend on `spellCheck` (it only needs
-  `restoreIfInvalid` + the lexicon); the mid-word half does, because that is the
-  eager restore itself.
-
-**Why both raw spellings are consulted.** The collapsed `rawWord` alone
-misses a real word that contains the `ww` escape: `arrowweed` collapses to
-`arroweed`, which is not a word, so the cancelled literal (`arowweed`) would
-beat the raw restore. The uncollapsed keystrokes alone would miss the other
-direction (`wwin` meant as `win`; the collapsed `win` is the word). Either one
-being a dictionary word means "the raw keystrokes are a real word", and the raw
-OUTPUT is still `revertToRawUnits()` as before. `CancelKeepsLiteralWwEscape`
-pins `arrowweed`, `arrowwood`, `arrowworm` and `sparrowwort` to their
-pre-change output (`arroweed`, `arrowood`, `arroworm`, `sparrowort`: still not
-the dictionary spelling, because of the older `ww` collapse, which is a
-separate limitation).
-
-**Natural-typing sweep.** The same throwaway method as the Phase 6 sweep (every
-lowercase-alphabetic word of `/usr/share/dict/words`, 210,773 words, typed
-straight through `Engine` with that list as the lexicon, old engine vs. new,
-final output after Space) shows 0 differences: the two outputs are
-byte-identical. Every natural-typed dictionary word has its typed spelling in
-the dictionary, so `chooseAfterCancel` picks `.raw`, which is what the old rule
-picked too. Only the unlisted-word and mid-word cases above differ from before.
 
 ## Secure Input: phát hiện và báo (spec §7)
 

@@ -120,33 +120,6 @@ public enum RestoreDecision {
         return .composed
     }
 
-    /// The commit-time decision for a word whose tone/mark was CANCELLED by a
-    /// same-key double-strike and carries no tone or quality mark any more
-    /// (`Engine.keepsCancelledLiteral`): `.raw` iff ANY of the candidate raw
-    /// spellings `raws` is a dictionary word, otherwise `.composed`.
-    ///
-    /// Why this is not `choose`: that rule asks "is the composed word the real
-    /// one?", which needs the composed word to be IN the dictionary. Here the
-    /// user's own cancel key already told us they wanted the cancelled
-    /// literal, so the composed word wins even when it is missing from the
-    /// dictionary (`unssuspend` -> `unsuspend`, `unsuspend` is not a listed
-    /// word). The only thing that can overrule the cancel is the raw
-    /// keystrokes being a real word: `class`/`message`/`pass` typed naturally
-    /// contain a double letter that only LOOKS like a cancel. There is no
-    /// subsequence guard (unlike `choose`): the composed literal is already on
-    /// the screen and the user pressed the cancel key on purpose, so what is
-    /// on screen is kept.
-    ///
-    /// Why a list of spellings: the caller passes both the `ww`/`ddd`-collapsed
-    /// raw word (what the raw revert would render) and the keystrokes exactly
-    /// as typed. A real word that contains the `ww` escape (`arrowweed`) is
-    /// only recognised by the uncollapsed spelling, and a word typed with an
-    /// escape the user meant (`wwin` for `win`) only by the collapsed one.
-    /// Keeping the candidates a parameter keeps this function pure.
-    public static func chooseAfterCancel(raws: [String], lexicon: Lexicon) -> RestoreChoice {
-        raws.contains { lexicon.contains($0) } ? .raw : .composed
-    }
-
     /// True iff `needle` can be produced from `haystack` by deleting zero or
     /// more characters, keeping the remaining ones in the same relative
     /// order (a classic subsequence test) — never adding or reordering

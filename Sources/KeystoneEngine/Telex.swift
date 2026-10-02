@@ -27,13 +27,6 @@ struct Cell: Equatable {
 struct Composition: Equatable {
     var cells: [Cell] = []
     var tone: Tone = .ngang
-    /// True iff a same-key double-strike CANCEL fired while folding this word
-    /// AND `literalAfterCancel` was on (it stays false when that flag is off,
-    /// even if a cancel keystroke happened). `Engine.keepsCancelledLiteral`
-    /// reads it, together with "no tone / no vowel mark left", to tell a
-    /// cancelled literal (`susspend` -> `suspend`) from a natural double
-    /// letter in a word that is simply not Vietnamese.
-    var cancelled: Bool = false
 }
 
 /// The effect the previous key produced — used for double-strike detection.
@@ -95,7 +88,7 @@ enum Telex {
             prevChar = lo
             prevEffect = effect
         }
-        return Composition(cells: cells, tone: tone, cancelled: cancelled)
+        return Composition(cells: cells, tone: tone)
     }
 
     // MARK: - Per-key application

@@ -286,16 +286,13 @@ public final class Engine {
         let comp = interpret(rawKeys)
         let table = outputTable(for: config.codeTable)
         let newUnits: [UInt16]
-        if config.spellCheck && isUnrecoverable(comp) && !keepsCancelledLiteral(comp) {
+        if config.spellCheck && isUnrecoverable(comp) {
             // Eager restore (Phase 7): the composing word can never become a
             // legal Vietnamese syllable, so render the raw keystrokes
             // literally NOW instead of waiting for the word boundary — same
             // raw-rendering `finalize`'s revert-to-raw branch uses, so there
             // is no visual jump when the word boundary is eventually reached
             // (see DECISIONS.md "Eager restore (spellCheck / Phase 7)").
-            // Skipped for a cancelled mark-free literal: the user just pressed
-            // the cancel key on purpose, so the screen must not bring back the
-            // cancel key they just removed (`suss`) — see `keepsCancelledLiteral`.
             newUnits = Engine.collapseDoubledLiterals(rawKeys).flatMap { table.plain($0) }
         } else {
             newUnits = encode(comp, table: table)
@@ -403,22 +400,7 @@ public final class Engine {
             // `RestoreDecision` picks the COMPOSED word instead when it is
             // the real one and the raw spelling isn't — see DECISIONS.md
             // "Restore chooses the composed word when it is the real one".
-            //
-            // A cancelled word with nothing left to restore (see
-            // `keepsCancelledLiteral`) is decided by `chooseAfterCancel`
-            // instead: the user's own cancel key already picked the composed
-            // literal, so it wins unless the raw keystrokes are a real word
-            // (`class`), whether or not the composed word is in the dictionary
-            // (`unssuspend` -> `unsuspend`). Both the ww/ddd-collapsed `rawWord`
-            // and the keystrokes as typed are consulted: a real word with the
-            // `ww` escape inside (`arrowweed`) is only found by the latter.
-            let choice: RestoreChoice
-            if keepsCancelledLiteral(comp), let lexicon {
-                choice = RestoreDecision.chooseAfterCancel(raws: [rawWord, String(rawKeys)], lexicon: lexicon)
-            } else {
-                choice = RestoreDecision.choose(composed: composedWordU, raw: rawWord, lexicon: lexicon)
-            }
-            if choice == .composed {
+            if RestoreDecision.choose(composed: composedWordU, raw: rawWord, lexicon: lexicon) == .composed {
                 finalUnits = encode(capitalized(comp, if: shouldCapitalize), table: table)
             } else {
                 finalUnits = revertToRawUnits()
@@ -615,32 +597,6 @@ public final class Engine {
         guard Phonology.isLegalRime(nucleus: p.nucleusString, coda: p.codaString) else { return false }
         guard Phonology.toneAllowed(comp.tone, coda: p.codaString) else { return false }
         return true
-    }
-
-    /// OpenKey `checkRestoreIfWrongSpelling` parity (see DECISIONS.md "Huỷ dấu
-    /// xong giữ nguyên chữ đã huỷ"): OpenKey restores the raw keystrokes only
-    /// while some vowel still carries a tone or quality mark. Once a cancel
-    /// (`Composition.cancelled`) has stripped them all, the on-screen literal
-    /// is what the user chose, and restoring the raw keys would bring the
-    /// cancel key back (`s u s s` -> `suss`). True iff all of:
-    ///   - the cancel semantics are on and the cancel actually fired,
-    ///   - the input method is not VNI (see below),
-    ///   - a lexicon is present (without one the commit-time choice between
-    ///     composed and raw has nothing to decide with, so today's raw
-    ///     restore stays untouched),
-    ///   - no tone survives and no vowel carries a quality mark.
-    /// Consonant cells (including a `dStroke` đ) are ignored, like OpenKey.
-    ///
-    /// Telex only (Simple Telex folds through Telex too). A Telex cancel key is
-    /// a letter, and a doubled tone letter is rare in real words, which the
-    /// lexicon then catches. A VNI cancel key is a DIGIT, and digits are
-    /// ordinary text (`win11`, `ubuntu22.04`): a doubled digit there is data,
-    /// not a cancel, and this rule would silently drop one of them.
-    /// `Composition.cancelled` still means "a cancel fired" in both folds.
-    private func keepsCancelledLiteral(_ comp: Composition) -> Bool {
-        guard config.literalAfterCancel, config.inputMethod != .vni, lexicon != nil,
-              comp.cancelled, comp.tone == .ngang else { return false }
-        return !comp.cells.contains { $0.isVowel && $0.mark != .none }
     }
 
     /// Eager restore (Phase 7, `config.spellCheck`): is this composition

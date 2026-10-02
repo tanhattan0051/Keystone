@@ -48,7 +48,7 @@ enum VNI {
             }
             prevChar = lo; prevEffect = e
         }
-        return Composition(cells: cells, tone: tone, cancelled: cancelled)
+        return Composition(cells: cells, tone: tone)
     }
 
     private static func apply(_ lo: Character, upper up: Bool, prevChar: Character, prevEffect: Effect,
