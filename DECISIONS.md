@@ -2487,15 +2487,15 @@ has no letter case, almost no identifiers and few proper nouns, so "0 words
 newly wrong" below is a statement about THAT corpus, not a property of the
 rule. The out-of-corpus run in "What the corpus could not see" shows what the
 table missed. The last column is the shipped rule, measured after the final
-review's fixes (the two guards, the mid-word rule and four protected words,
-all described below); the first two are the prototype the margin was chosen on.
+review's fixes (the two guards and the mid-word rules, all described below);
+the first two are the prototype the margin was chosen on.
 
 | | main d0d3837 | margin 2 (prototype) | shipped |
 |---|---|---|---|
 | natural typing, final output correct | 87.60% | 87.60% (0 words newly wrong) | 87.60% (0 newly wrong) |
-| natural typing, on-screen before the space correct | 83.33% | 83.32% (6 rare words: troff, missed, presses, perrig, ...) | 83.33% (1 word, `troff`) |
-| OpenKey habit, final correct | 87.13% | 89.39% (0 newly wrong, 408 newly right) | 89.33% (0 newly wrong, 403 newly right) |
-| OpenKey habit, on-screen before the space correct | 71.10% | 87.51% | 83.40% |
+| natural typing, on-screen before the space correct | 83.33% | 83.32% (6 rare words: troff, missed, presses, perrig, ...) | 83.32% (3 words: `troff`, and the habit strings `tassk`, `classs`, which are meant to change) |
+| OpenKey habit, final correct | 87.13% | 89.39% (0 newly wrong, 408 newly right) | 89.39% (0 newly wrong, 409 newly right) |
+| OpenKey habit, on-screen before the space correct | 71.10% | 87.51% | 86.37% (1 newly wrong, `classs`) |
 
 Two variants were measured and rejected. **Margin 1** broke 9 real words
 (`lesskey`, `onerror`, `nonbootable`, ...): a natural double whose composed
@@ -2580,16 +2580,16 @@ typing, compared with main:
   vanish together).
 - The two guards above (exactly one key vanished; no mixed case) remove most of
   that and move no habit word on the 6,977-word corpus. Alone, on the same
-  tokens, the one-key guard leaves 200 tokens newly wrong and the case guard
-  76; together, with the four protected words below, **58 tokens (333
-  occurrences) remain, about 1 occurrence in 140,000 words** of code and man
-  pages. Of those, 8 tokens (41 occurrences) are this repo's own deliberate
-  habit strings (`unssuspend`, ...), which the rule is meant to change, and 14
-  tokens (41 occurrences) are mostly misspellings or tripled letters that it
-  "corrects" (`preceeded` → `preceded`, `occassions`, `messsages`). The other
-  36 tokens (251 occurrences, about 1 in 186,000 words) are the residue.
+  tokens, the one-key guard leaves 210 tokens (1,942 occurrences) newly wrong and
+  the case guard 82 (489); together, **64 tokens (350 occurrences) remain, about
+  1 occurrence in 133,000 words** of code and man pages. Of those, 8 tokens (41
+  occurrences) are this repo's own deliberate habit strings (`unssuspend`, ...),
+  which the rule is meant to change, and 14 tokens (41 occurrences) are mostly
+  misspellings or tripled letters that it "corrects" (`preceeded` → `preceded`,
+  `occassions`, `messsages`). The other 42 tokens (268 occurrences, about 1 in
+  174,000 words) are the residue.
 - Habit typing on the same tokens: 12 newly wrong (57 occurrences, against 84 /
-  457 before the guards) and 1,797 newly right (115,312 occurrences).
+  457 before the guards) and 1,792 newly right (115,255 occurrences).
 
 **The residue, by class.** All of these are a double letter at a morpheme
 boundary or in a foreign spelling, which at the keystroke level is
@@ -2597,32 +2597,52 @@ indistinguishable from a habit cancel: natural `sysstat` looks exactly like
 habit-typed `systat` (`sý`, then another `s`), and only the dictionary can tell
 them apart.
 
-- Code and sysadmin words: `insstr` (curses), `upsshutdown`, `defflow`,
-  `transspec`, `reffile`, `arrlen`, `isstring`, `defframe`, `deffunc`,
-  `classhints`.
+- Code and sysadmin words: `insstr` (curses), `sysstat` and its relatives
+  (`sysstatfs`, `sysstatvfs`), `upsshutdown`, `defflow`, `transspec`, `reffile`,
+  `arrlen`, `isstring`, `defframe`, `deffunc`, `classhints`.
 - ALL-CAPS constants and mnemonics (ALL-CAPS keeps the rule): `OSSTRING`,
   `UPSSHUTDOWN`, `ERREMOTE`, `DEFFILEMODE`, `INFFLAGS`, the Go assembler's
   `AXXSETACCZ` and `AXXBR*`.
 - Foreign proper nouns: `Alessandro`, `Kirrily`, `Janssen`, `Herrmann`.
-- A few foreign-language words in man pages (`januaari`).
+- A few foreign-language words in man pages (`januaari`), and real English words
+  the 1934 list lacks (`sassiness`, `misscanned`, `misscanning`).
 
 **A residue loses a letter, never more than one.** `insstr` commits as `instr`,
-`Alessandro` as `Alesandro`. The one-key guard is what makes "several letters"
-impossible: the composed word is always exactly one key shorter than what was
-typed. The rule is a heuristic that was measured, not a guarantee; this
-paragraph is the measured size of what it gets wrong. Three of the residue words
-are pinned by `LexiconRealDictionaryTests` as accepted limitations
+`Alessandro` as `Alesandro`, `sysstat` as `systat`. What the one-key guard checks
+is that the typed keys exceed the cells left by exactly one, OR that the
+`ww`/`ddd`-collapsed keys do (with a `ww` escape the typed keys alone can exceed
+them by two, and one of those two is the escape the writer meant). So the rule
+drops one letter relative to what the writer meant, never two. The rule is a
+heuristic that was measured, not a guarantee; this paragraph is the measured
+size of what it gets wrong. Seven residue words are pinned by
+`LexiconRealDictionaryTests` as accepted limitations
 (`acceptedResidueStillLosesOneLetter`), so a change to the margin or the guards
 cannot move them unnoticed.
 
-**Four real words were added to `protectedRealWords`** because the review found
-them and the 1934 list lacks them: `sysstat` (the sysadmin tool), `sassiness`,
-`misscanned`, `misscanning`. A raw spelling that is a word wins by rule 1. The
-measured cost, found by removing the four words: five habit-typed words on the
-corpus (`systems`, `systemsetup`, `systemreadwrite`, `systemstatecache`,
-`systemuiserver`) no longer come out right, because their raw spelling
-`sysst…` now begins a listed word (`sysstat`); habit final 89.39% → 89.33%,
-nothing else moves.
+**Why `sysstat` and the other residue words are NOT protected.** The first fix
+round added `sysstat`, `sassiness`, `misscanned` and `misscanning` to
+`SupplementaryWords.protectedRealWords` so that a raw spelling that is a word
+wins by rule 1. The re-review found the cost: a protected entry also becomes a
+dictionary PREFIX, which changes the depth of every raw spelling that starts
+like it. With `sysstat` listed, the raw spelling `sysst…` is a prefix (depth 5)
+and the composed `system…` (depth 6) no longer clears margin 2, so habit-typed
+`systemd` committed `sysstemd`, `systems` committed `sysstems`, and the whole
+`system*` family that is not itself listed went wrong (five of them on the
+prose corpus alone: `systems`, `systemsetup`, `systemreadwrite`,
+`systemstatecache`, `systemuiserver`); `misscanned` did the same to
+habit-typed `miscalibrated`. Those habit words are far more frequent for this
+author than the natural words being protected, so all four entries were removed
+and the four words became residue (above). The existing `protectedRealWords`
+entries were chosen for a different reason (each one's collapsed spelling is a
+different real word); this round did not re-measure them for the prefix effect.
+
+What was added instead, in `SupplementaryWords.all`: the `sys*` tools the author
+types daily with the cancel habit, so that the composed spelling is a WORD and
+wins by rule 2 (`syssadmin` → `sysadmin`, `syssctl` → `sysctl`, `sysstemd` →
+`systemd`; also `sysfs`, `sysinfo`, `sysprep`; `systemctl` was already there).
+Pinned against the real dictionary by `LexiconRealDictionaryTests`
+(`habitTypedSysadminWordCommitsWithoutTheCancelKey`, which also pins natural
+`systems` and habit `sysstems` both committing `systems`).
 
 **The mid-word display after a cancel (final review).** `rerender` decides
 what the screen shows while the word is still being typed, and `finalize`
@@ -2636,26 +2656,36 @@ so the cancel key showed the raw keys, but a later key made composed `mise` a
 prefix of some word and the "composed is a prefix" rule flipped the screen to
 the composed spelling, although the commit keeps `missed`.
 
-The rule now: re-derive, from `rawKeys` alone (no new engine state, so Backspace
-needs nothing), the keystroke where the cancel fired (the shortest prefix whose
-fold reports `cancelled`). If the mid-word choice AT that keystroke was RAW,
-later keys may switch the display to the composed spelling only through the
-margin rule (composed depth ≥ max raw depth + 2), never because the composed
-spelling merely "is a prefix" (`composedMayWinAsPrefix: false`). If the choice at
-the cancel key was COMPOSED (`unss` → `uns`, `tass` → `tas`), behavior is
-unchanged. The commit-time choice is unchanged.
+The rule now (`RestoreDecision.chooseMidWordAfterCancel`, called by
+`Engine.midWordChoiceAfterCancel`): re-derive, from `rawKeys` alone (no new
+engine state, so Backspace needs nothing), the keystroke where the cancel fired
+(the shortest prefix whose fold reports `cancelled`; `cancelLength` is its
+number of keys). If the mid-word choice AT that keystroke was COMPOSED (`unss` →
+`uns`, `tass` → `tas`), behavior is unchanged. If it was RAW, later keys may
+switch the display to the composed spelling only through the margin rule
+(composed depth ≥ max raw depth + 2), never because the composed spelling merely
+"is a prefix" (`composedMayWinAsPrefix: false`) — with one EARLY exception: when
+the deepest raw spelling has `prefixDepth <= cancelLength`, i.e. the raw
+spelling stopped being a dictionary prefix at or before the cancel key's own
+position, the prefix rule is back. Raw that dies exactly at the doubled key is
+the habit-cancel signature (`susspend` dies at `sussp`, `classs` at `classs`),
+whereas a natural word dies later, at an inflection beyond the cancel (`missed`
+dies at `missed`: `misse` still begins `missel`). The commit-time choice is
+unchanged.
 
-Measured cost and gain. On the 99,659 out-of-corpus tokens, natural words whose
-COMMIT is right but which showed a wrong spelling before the space: 243 tokens
-(4,912 occurrences) with the first version, 97 tokens (2,042 occurrences) now. On
-the 6,977-word corpus, natural on-screen-before-the-space is 83.33%, equal to
-main (the only newly wrong word is `troff`; it was 6 words). The price is on the
-habit side: habit typing on-screen before the space is 83.40% (main 71.10%; the
-first version 87.51%), because a habit word whose raw spelling at the cancel key
-is itself a prefix keeps showing the cancel key until the space: `classs` shows
-`classs`, then `class` once the space commits it. Habit FINAL output is not
-changed by this rule (it stays 89.33%, which already includes the protected
-words above).
+Measured cost and gain, three versions. Natural words whose COMMIT is right but
+which showed a wrong spelling before the space, on the 99,659 out-of-corpus
+tokens: 243 tokens (4,912 occurrences) with the first version (no sticky rule),
+97 (2,042) with the sticky rule alone, 137 (3,082) with the early exception. The
+words the early exception adds are natural words whose raw spelling dies right
+after a cancel-shaped double: `errp`, `errb`, `perrno`, `arrp`, `verrc` (raw
+`err` is a prefix of `error`, `errp` is not, so `erp` is shown until the space,
+which commits `errp`). Habit typing on-screen before the space on the 6,977-word
+corpus: 87.51% first version, 83.40% sticky alone (`classs` showed `classs`
+until the space), 86.37% now (main 71.10%). Natural on-screen before the space:
+83.33% = main for the first two (1 word, `troff`), 83.32% now (`troff` plus the
+habit strings `tassk` and `classs` typed literally, which the rule is meant to
+change). Habit FINAL output is not changed by any of this (89.39%).
 
 **The prefix index and the tap thread.** `Lexicon` keeps a sorted array of its
 lowercase words (`isPrefix` and `prefixDepth` are lower-bound binary searches,
@@ -2688,30 +2718,34 @@ the prose corpus and the sweep. The 14-row behavior table is pinned by
 `CancelKeepsLiteralTests.swift` (rows 11-13, the cases that must NOT change,
 hold strings measured on main before `Engine.swift` was touched), the pure
 prefix queries by `LexiconTests.swift`, the margin boundary (difference 1 →
-raw, 2 → composed), the subsequence guard and the mid-word switch by
+raw, 2 → composed), the subsequence guard, the mid-word switch and the early
+exception (boundary `rawDepth <= cancelLength` in both directions) by
 `ChooseAfterCancelTests`, the two guards by `CancelGuardsTests` (pure) and, through
 the engine, by `CancelKeepsLiteralNaturalTypingStaysAsTyped` (`boundsError`,
 `isString`, `addSuccess`, `OSString`, `Montserrat`, each guard alone has a word
 only it rejects; strings measured on main), against the real dictionary by
 `LexiconRealDictionaryTests`, the mid-word display by
-`CancelKeepsLiteralMidWordDisplay`, and the subsequence guard through the engine,
+`CancelKeepsLiteralMidWordDisplay` (natural `missed` shows `missed`, `classs`
+shows `class` after the 6th key, `susspend` shows `susp` at the 5th), and the
+subsequence guard through the engine,
 with each quick-consonant toggle on, by `CancelKeepsLiteralQuickConsonantsTests`.
 
 **Accepted trade-offs.**
 
 - Display and commit are decided separately, so a few natural words still flash
-  the composed form before the space (97 tokens, 2,042 occurrences in 46.6M
-  words; on the prose corpus only `troff`). They commit correctly at a space or
-  any other boundary. After a mouse click or a Cmd/Ctrl/Option chord the engine
-  resets without committing, and whatever was displayed stays; that is why the
-  mid-word rule above exists, and why it is not zero.
-- It is a measured heuristic, not a guarantee. 89.33% of habit-typed words on the
+  the composed form before the space (137 tokens, 3,082 occurrences in 46.6M
+  words, e.g. `errp` shows `erp`; on the prose corpus only `troff`). They commit
+  correctly at a space or any other boundary. After a mouse click or a
+  Cmd/Ctrl/Option chord the engine resets without committing, and whatever was
+  displayed stays; that is why the sticky rule above exists, and why it is not
+  zero.
+- It is a measured heuristic, not a guarantee. 89.39% of habit-typed words on the
   corpus come out right, not 100%. A natural word whose composed form is
   accidentally 2+ letters deeper in the dictionary than its raw one, and that the
   lexicon does not list, loses the doubled letter, exactly one letter (see "The
   residue, by class": code and sysadmin words, ALL-CAPS constants, foreign proper
-  nouns). On the 46.6M-word run that is about 1 occurrence in 186,000 words.
-- A habit word whose raw spelling at the cancel key is itself a dictionary prefix
-  shows the cancel key until the space (`classs` shows `classs`, then `class`).
+  nouns). On the 46.6M-word run that is about 1 occurrence in 174,000 words.
+  Protecting such words in `protectedRealWords` does not fix it, it breaks habit
+  typing of common words (see "Why `sysstat` ... NOT protected").
 - Escape hatch: turn off "Huỷ dấu xong thì gõ tiếp chữ thường (như OpenKey)"
   (`literalAfterCancel`), or `useLexicon`, and the old behavior comes back.

@@ -92,7 +92,7 @@ Cùng với **self-tag** chống xử lý lại chính event mình sinh ra, **kh
   trong từ điển. Từ viết lẫn hoa thường (`isString`) hay mất hơn một phím (`boundsError`) giữ nguyên
   như gõ; VNI không bị ảnh hưởng (phím huỷ là chữ số, như `win11`). Đây là heuristic đã đo, không
   phải bảo đảm: không từ nào trong 6.977 từ tiếng Anh viết thường (man page, tài liệu repo) bị đổi
-  sai, nhưng trên 46,6 triệu từ code và man page vẫn còn cỡ 1 lần mỗi 186.000 từ gõ đúng bị mất một
+  sai, nhưng trên 46,6 triệu từ code và man page vẫn còn cỡ 1 lần mỗi 174.000 từ gõ đúng bị mất một
   chữ (`insstr` → `instr`, hằng số IN HOA, tên riêng như `Alessandro`). Tắt công tắc "Huỷ dấu xong
   thì gõ tiếp chữ thường" để về hành vi cũ. Xem DECISIONS.md "Cancel keeps the literal:
   English-likeness by dictionary prefixes".
