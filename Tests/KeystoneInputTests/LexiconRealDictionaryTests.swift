@@ -120,6 +120,25 @@ struct LexiconRealDictionaryTests {
                 "natural typing of \(w)")
     }
 
+    // The residue the two guards cannot remove: a morpheme-boundary double in a code word
+    // (`insstr`, curses), an ALL-CAPS constant (`OSSTRING`) and a foreign proper noun
+    // (`Alessandro`) look, at the keystroke level, exactly like a habit-typed `instr` /
+    // `OSTRING` / `Alesandro`; only the dictionary could tell them apart and it does not know
+    // them. Each loses exactly ONE letter (the exactly-one-key guard makes more impossible).
+    // This pins what is COMMITTED today, as a documented limitation and not an endorsement: a
+    // change to the margin or the guards moves it, and then this test must be updated on
+    // purpose, with the numbers re-measured. DECISIONS.md "Cancel keeps the literal" has the
+    // measured size of the residue.
+    private static let acceptedResidue: [(typed: String, committed: String)] = [
+        ("insstr", "instr"), ("Alessandro", "Alesandro"), ("OSSTRING", "OSTRING"),
+    ]
+
+    @Test(arguments: acceptedResidue)
+    func acceptedResidueStillLosesOneLetter(_ residue: (typed: String, committed: String)) {
+        #expect(typeAndFlush(residue.typed, config: Self.cancelRuleOn, lexicon: realLexicon)
+                == residue.committed, "natural typing of \(residue.typed)")
+    }
+
     // MARK: - Quick-consonant words commit raw with the relevant toggle, even
     // against the real (much bigger) dictionary — the subsequence guard, not
     // dictionary luck, is what protects these.

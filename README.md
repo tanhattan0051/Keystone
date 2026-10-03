@@ -89,8 +89,12 @@ Cùng với **self-tag** chống xử lý lại chính event mình sinh ra, **kh
   được chọn giữa dạng đã huỷ và dạng gõ thô theo độ giống tiếng Anh, so bằng tiền tố của từ điển:
   dạng đã huỷ chỉ thắng khi nó là một từ, hoặc còn khớp từ điển dài hơn dạng thô ít nhất 2 chữ cái.
   Nhờ vậy `unssuspend → unsuspend`, `unsspend → unspend`, `susspend → suspend` dù từ đó không có
-  trong từ điển, còn từ gõ đúng như `messages`, `processing`, `diff` vẫn giữ nguyên. VNI không bị
-  ảnh hưởng (phím huỷ là chữ số, như `win11`). Xem DECISIONS.md "Cancel keeps the literal:
+  trong từ điển. Từ viết lẫn hoa thường (`isString`) hay mất hơn một phím (`boundsError`) giữ nguyên
+  như gõ; VNI không bị ảnh hưởng (phím huỷ là chữ số, như `win11`). Đây là heuristic đã đo, không
+  phải bảo đảm: không từ nào trong 6.977 từ tiếng Anh viết thường (man page, tài liệu repo) bị đổi
+  sai, nhưng trên 46,6 triệu từ code và man page vẫn còn cỡ 1 lần mỗi 186.000 từ gõ đúng bị mất một
+  chữ (`insstr` → `instr`, hằng số IN HOA, tên riêng như `Alessandro`). Tắt công tắc "Huỷ dấu xong
+  thì gõ tiếp chữ thường" để về hành vi cũ. Xem DECISIONS.md "Cancel keeps the literal:
   English-likeness by dictionary prefixes".
 - **Kiểm tra chính tả** *(mặc định bật):* khi từ đang gõ trở thành một âm tiết tiếng Việt "chết" —
   không cách nào gõ tiếp để thành hợp lệ được nữa (vd phụ âm cuối `ck`, `vm`... không phải phụ âm đầu

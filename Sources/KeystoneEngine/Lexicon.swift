@@ -213,10 +213,13 @@ public enum RestoreDecision {
     /// `Lexicon.prefixDepth`).
     ///
     /// WHY 2. Measured on 159,287 words of real English prose (22 man pages +
-    /// the repo's docs, 6,977 distinct words), typed naturally and with the
-    /// OpenKey cancel habit, against main (no rule): natural typing final output
-    /// correct 87.60% -> 87.60% (0 words newly wrong) at margin 2, habit typing
-    /// 87.13% -> 89.39% (0 newly wrong, 408 newly right). Margin 1 broke 9
+    /// the repo's docs, 6,977 distinct words; LOWERCASED, letters only, so
+    /// almost no identifiers or names: "newly wrong" is scoped to that corpus,
+    /// see DECISIONS.md "What the corpus could not see"), typed naturally and
+    /// with the OpenKey cancel habit, against main (no rule): natural typing
+    /// final output correct 87.60% -> 87.60% (0 words newly wrong) at margin 2,
+    /// habit typing 87.13% -> 89.39% (0 newly wrong, 408 newly right) before the
+    /// final-review fixes (89.33%, 403 newly right after). Margin 1 broke 9
     /// real words (`lesskey`, `onerror`, `nonbootable`, ...): a natural double
     /// letter whose composed form happens to keep matching the dictionary one
     /// letter longer. Adding -s/-ed/-es stem rules instead broke the habit case
