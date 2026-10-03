@@ -149,6 +149,13 @@ public enum SupplementaryWords {
         "xargs", "dmarc", "exim", "iframe", "nodejs", "haproxy", "firebase",
         "pytest", "eslint", "websocket", "vhost", "laravel", "jquery",
         "flexbox",
+        // The `sys*` tools typed daily with the OpenKey habit (`sy` + `s` shows `sý`, the second
+        // `s` cancels it: `syssadmin`). Listed here so the composed spelling is a WORD and wins
+        // (`sysadmin`, not `syssadmin`). `sysstat` is deliberately not listed in either list:
+        // a protected `sysstat` makes the raw spelling `sysst…` a dictionary prefix and habit
+        // `systemd`/`systems` would then commit as `sysstemd`/`sysstems`, see DECISIONS.md
+        // "Cancel keeps the literal".
+        "sysadmin", "sysctl", "sysfs", "sysinfo", "sysprep", "systemd",
     ]
 
     // MARK: - Social & chat
@@ -207,13 +214,6 @@ public enum SupplementaryWords {
         "transsonic", "hassidic", "hassidim", "chassidim", "mycorrhiza", "degass",
         "unbiassed", "aaa", "iss", "poisson", "cassava", "cassaba", "hassan",
         "parramatta", "oss", "herr", "kerr", "orr", "starr", "barr", "neff", "foxx", "maxx",
-        // Added with the cancel rule (`RestoreDecision.chooseAfterCancel`), found by the final
-        // review's falsification run. Here the trouble is not a coincidentally-real composed
-        // word but the rule's dictionary-prefix depth: the composed form (`systat`, `sasines`)
-        // stays English-like two letters longer than the raw one, so the rule would drop the
-        // doubled letter. `sysstat` is the sysadmin tool, `sassiness` a plain English word, and
-        // `misscanned`/`misscanning` the common inflections of a word that is itself listed.
-        "sysstat", "sassiness", "misscanned", "misscanning",
     ]
 
     /// Force-English whitelist (Lớp B): English words whose Telex keystrokes ALSO

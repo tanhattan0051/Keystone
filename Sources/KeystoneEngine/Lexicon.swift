@@ -218,8 +218,8 @@ public enum RestoreDecision {
     /// see DECISIONS.md "What the corpus could not see"), typed naturally and
     /// with the OpenKey cancel habit, against main (no rule): natural typing
     /// final output correct 87.60% -> 87.60% (0 words newly wrong) at margin 2,
-    /// habit typing 87.13% -> 89.39% (0 newly wrong, 408 newly right) before the
-    /// final-review fixes (89.33%, 403 newly right after). Margin 1 broke 9
+    /// habit typing 87.13% -> 89.39% (0 newly wrong, 408 newly right; 409 after the
+    /// final-review fixes). Margin 1 broke 9
     /// real words (`lesskey`, `onerror`, `nonbootable`, ...): a natural double
     /// letter whose composed form happens to keep matching the dictionary one
     /// letter longer. Adding -s/-ed/-es stem rules instead broke the habit case
@@ -268,19 +268,17 @@ public enum RestoreDecision {
     ///
     /// `composedMayWinAsPrefix` only matters mid-word. `false` removes rule 2
     /// ("composed is a prefix"), leaving the margin rule as the only way for
-    /// the composed spelling to replace the raw one. The engine passes `false`
-    /// once the keystroke that fired the cancel was itself DISPLAYED as the raw
-    /// keys (`miss`): a click or a Cmd/Ctrl/Option chord resets the engine
-    /// without committing, so whatever the last keystroke showed stays on
+    /// the composed spelling to replace the raw one. The engine reaches it
+    /// through `chooseMidWordAfterCancel`, once the keystroke that fired the
+    /// cancel was itself DISPLAYED as the raw keys (`miss`) and the raw spelling
+    /// is still alive past it: a click or a Cmd/Ctrl/Option chord resets the
+    /// engine without committing, so whatever the last keystroke showed stays on
     /// screen as final text, and a natural `missed` must not flip to `mised`
     /// merely because "mise" happens to begin some word later on. Measured on
-    /// 99,659 distinct out-of-corpus tokens (46.6M words of code and man pages),
-    /// that cuts the words that flash wrong but commit right from 243 to 97
-    /// tokens (4,912 to 2,042 occurrences). The cost: a habit word shows its
-    /// cancel key a little longer (`classs` shows `classs` until the space;
-    /// habit typing, on-screen before the space, 87.51% -> 83.40% on the
-    /// 6,977-word corpus, main 71.10%). Commit-time results are unchanged. See
-    /// DECISIONS.md "Cancel keeps the literal".
+    /// 99,659 distinct out-of-corpus tokens (46.6M words of code and man pages)
+    /// together with the early rule of `chooseMidWordAfterCancel`; the numbers
+    /// are in DECISIONS.md "Cancel keeps the literal". Commit-time results are
+    /// unchanged.
     public static func chooseAfterCancel(
         composed: String, raws: [String], lexicon: Lexicon, atCommit: Bool,
         composedMayWinAsPrefix: Bool = true
@@ -299,6 +297,40 @@ public enum RestoreDecision {
         return lexicon.prefixDepth(composedLower) >= rawDepth + englishLikenessMargin ? .composed : .raw
     }
 
+    /// The mid-word (display) decision for a word the cancel rule accepted: the
+    /// ordinary mid-word `chooseAfterCancel`, with the "composed is a prefix"
+    /// rule (rule 2) switched off while the raw spelling is still alive past the
+    /// keystroke that fired the cancel.
+    ///
+    /// `rawShownAtCancelOfLength` is `nil` unless the display at the cancel
+    /// keystroke was the RAW keys (`miss`); then it is the number of keys typed
+    /// up to and including that keystroke. With `nil` this is exactly
+    /// `chooseAfterCancel(atCommit: false)`.
+    ///
+    /// WHY. A click or a Cmd/Ctrl/Option chord resets the engine without
+    /// committing, so the last mid-word display can become the final text (see
+    /// `chooseAfterCancel`, `composedMayWinAsPrefix`). Once the cancel key was
+    /// shown raw, a later key may switch to the composed spelling only through
+    /// the margin rule, EXCEPT when the raw spelling stopped being a dictionary
+    /// prefix at or before the cancel key's own position (`rawDepth <=
+    /// rawShownAtCancelOfLength`): then the prefix rule is back. That is the
+    /// habit-cancel signature, the raw spelling dies exactly at the doubled key
+    /// (`susspend` dies at `sussp`, `classs` at `classs`), whereas a natural word
+    /// dies later, at an inflection beyond the cancel (`missed` dies at `missed`,
+    /// `misse` still begins `missel`). `rawDepth` is the deepest of `raws`.
+    public static func chooseMidWordAfterCancel(
+        composed: String, raws: [String], lexicon: Lexicon, rawShownAtCancelOfLength: Int?
+    ) -> RestoreChoice {
+        var composedMayWinAsPrefix = true
+        if let cancelLength = rawShownAtCancelOfLength {
+            let rawDepth = distinctLowercased(raws).map { lexicon.prefixDepth($0) }.max() ?? 0
+            composedMayWinAsPrefix = rawDepth <= cancelLength
+        }
+        return chooseAfterCancel(
+            composed: composed, raws: raws, lexicon: lexicon, atCommit: false,
+            composedMayWinAsPrefix: composedMayWinAsPrefix)
+    }
+
     /// The lowercased `raws` with repeats removed, order kept.
     private static func distinctLowercased(_ raws: [String]) -> [String] {
         var out: [String] = []
@@ -312,7 +344,10 @@ public enum RestoreDecision {
     /// Guard G1 of the cancel rule: did the cancel delete EXACTLY ONE key?
     /// `typedCount` is the number of keys typed, `collapsedTypedCount` the same
     /// after the `ww`/`ddd` collapse (a `ww` escape is a second, deliberate
-    /// deletion), `composedCount` the number of cells left.
+    /// deletion), `composedCount` the number of cells left. It admits a word when
+    /// the typed keys exceed the cells by exactly one, OR the collapsed keys do;
+    /// with a `ww` escape the typed keys alone can exceed them by two, and one of
+    /// those two is the escape the writer meant, not a lost letter.
     ///
     /// WHY. In the OpenKey habit the writer types the intended letters plus ONE
     /// extra key, the one that cancels the tone they did not want, so raw is
@@ -324,7 +359,7 @@ public enum RestoreDecision {
     /// several letters at once (`addSuccess` -> `adducces`). Requiring exactly
     /// one key moves no habit word on the 6,977-word corpus and, on the 99,659
     /// out-of-corpus tokens, takes the natural words newly wrong at commit from
-    /// 304 to 200 alone (58 with the case guard); see DECISIONS.md.
+    /// 304 to 210 alone (64 with the case guard); see DECISIONS.md.
     public static func cancelDeletedExactlyOneKey(
         typedCount: Int, collapsedTypedCount: Int, composedCount: Int
     ) -> Bool {
@@ -342,7 +377,7 @@ public enum RestoreDecision {
     /// Capitalized words and ALL-CAPS words, none of which mix case, so they
     /// keep the rule. No habit word on the 6,977-word corpus moves and, on the
     /// 99,659 out-of-corpus tokens, the natural words newly wrong at commit go
-    /// from 304 to 76 alone (58 with the one-key guard); see DECISIONS.md.
+    /// from 304 to 82 alone (64 with the one-key guard); see DECISIONS.md.
     public static func mixesLetterCase(_ keys: [Character]) -> Bool {
         let hasLowercase = keys.contains { $0.isLowercase }
         let hasLaterUppercase = keys.dropFirst().contains { $0.isUppercase }

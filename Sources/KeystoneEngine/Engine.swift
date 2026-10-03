@@ -676,35 +676,38 @@ public final class Engine {
     /// chord resets the engine without committing, so this display can become
     /// the final text. Hence: once the keystroke that fired the cancel was
     /// itself displayed as the RAW keys, a later key may switch the screen to
-    /// the composed spelling only through the margin rule, never because the
-    /// composed spelling merely "is a prefix" (see `composedMayWinAsPrefix` on
-    /// `RestoreDecision.chooseAfterCancel`, which has the measurements).
+    /// the composed spelling only through the margin rule, unless the raw
+    /// spelling died by that keystroke's position (the habit-cancel signature):
+    /// see `RestoreDecision.chooseMidWordAfterCancel`, which has the rule and the
+    /// measurements.
     private func midWordChoiceAfterCancel(_ comp: Composition) -> RestoreChoice {
         guard let lexicon else { return .raw }
-        return RestoreDecision.chooseAfterCancel(
-            composed: composedText(of: comp), raws: rawSpellings(of: rawKeys),
-            lexicon: lexicon, atCommit: false,
-            composedMayWinAsPrefix: !cancelKeystrokeWasDisplayedRaw(lexicon))
+        return RestoreDecision.chooseMidWordAfterCancel(
+            composed: composedText(of: comp), raws: rawSpellings(of: rawKeys), lexicon: lexicon,
+            rawShownAtCancelOfLength: cancelLengthIfDisplayedRaw(lexicon))
     }
 
-    /// Was the display right after the keystroke that FIRED the cancel the raw
-    /// keys? Re-derived from `rawKeys` alone (the fold is a left-to-right scan,
+    /// If the display right after the keystroke that FIRED the cancel was the raw
+    /// keys, the number of keys typed up to and including that keystroke;
+    /// otherwise `nil`. One scan finds both the keystroke and what was shown
+    /// there. Re-derived from `rawKeys` alone (the fold is a left-to-right scan,
     /// so a prefix folds to exactly what it did when it was the whole word), so
     /// no engine state is added and Backspace over any key just works.
     ///
-    /// `false` when that keystroke is the latest one: its own decision is the one
+    /// `nil` when that keystroke is the latest one: its own decision is the one
     /// being made now. A cancel needs two keys, hence the scan starts at 2.
-    private func cancelKeystrokeWasDisplayedRaw(_ lexicon: Lexicon) -> Bool {
-        guard rawKeys.count > 2 else { return false }
+    private func cancelLengthIfDisplayedRaw(_ lexicon: Lexicon) -> Int? {
+        guard rawKeys.count > 2 else { return nil }
         for length in 2..<rawKeys.count {
             let prefix = Array(rawKeys[..<length])
             let prefixComp = interpret(prefix)
             guard prefixComp.cancelled else { continue }
-            return RestoreDecision.chooseAfterCancel(
+            let shown = RestoreDecision.chooseAfterCancel(
                 composed: composedText(of: prefixComp), raws: rawSpellings(of: prefix),
-                lexicon: lexicon, atCommit: false) == .raw
+                lexicon: lexicon, atCommit: false)
+            return shown == .raw ? length : nil
         }
-        return false
+        return nil
     }
 
     /// Eager restore (Phase 7, `config.spellCheck`): is this composition

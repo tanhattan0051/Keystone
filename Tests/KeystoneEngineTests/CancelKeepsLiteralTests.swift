@@ -104,19 +104,17 @@ struct CancelKeepsLiteralTelexTests {
     // ARE the word), and "classs" (an extra cancel) gives the composed word
     // "class". "clasp" only has to be there so "clas" is a prefix.
     //
-    // While typing "classs" the screen shows the extra s until the space: at the
-    // cancelling key the raw keys "class" are themselves the word, so the display
-    // chose RAW there, and a later key may switch to composed only by the margin
-    // rule (composed "class" is no deeper than raw "classs"). The commit still
-    // gives "class". This is the measured price of not flashing natural words
-    // like `missed` (see DECISIONS.md "Cancel keeps the literal").
+    // At the cancelling key the raw keys "class" are themselves the word, so the
+    // display shows them. The next key kills the raw spelling ("classs" is no
+    // prefix) exactly one key after the cancel, which is the habit-cancel
+    // signature, so the composed "class" may take over at once (the early rule of
+    // `chooseMidWordAfterCancel`).
     @Test func row6_classAndClassssBothCommitClass() {
         let lex = Lexicon(["class", "clasp"])
         #expect(typeThroughEngine("class ", config: on, lexicon: lex) == "class ")
         #expect(typeThroughEngine("classs ", config: on, lexicon: lex) == "class ")
         #expect(typeStepwise("class", config: on, lexicon: lex).last == "class")
-        #expect(typeStepwise("classs", config: on, lexicon: lex)
-                == ["c", "cl", "cla", "clas", "class", "classs"])
+        #expect(typeStepwise("classs", config: on, lexicon: lex).last == "class")
     }
 
     @Test func row7_messsageAndMessageBothCommitMessage() {
@@ -466,6 +464,69 @@ struct ChooseAfterCancelTests {
             composedMayWinAsPrefix: false) == .raw)
     }
 
+    // MARK: chooseMidWordAfterCancel (the engine's mid-word call)
+    //
+    // `rawShownAtCancelOfLength` is nil unless the display at the cancel keystroke was the raw
+    // keys; then it is the number of keys typed up to and including that keystroke. Raw that
+    // died by that position (rawDepth <= cancelLength) is the habit-cancel signature and the
+    // composed spelling may win as a prefix; raw that stays alive past it is a natural word
+    // and only the margin rule may switch the display.
+
+    private func midWordAfterCancel(_ composed: String, _ raws: [String], _ lexicon: Lexicon,
+                                    rawShownAtCancelOfLength n: Int?) -> RestoreChoice {
+        RestoreDecision.chooseMidWordAfterCancel(
+            composed: composed, raws: raws, lexicon: lexicon, rawShownAtCancelOfLength: n)
+    }
+
+    @Test func midWordWithoutARawCancelDisplayIsTheOrdinaryMidWordRule() {
+        // nil: composed "abc" is a prefix, raw "abcc" is not -> composed.
+        #expect(midWordAfterCancel("abc", ["abcc"], lex, rawShownAtCancelOfLength: nil) == .composed)
+        #expect(midWordAfterCancel("abc", ["abcc"], lex, rawShownAtCancelOfLength: nil)
+                == midWord("abc", ["abcc"], lex))
+    }
+
+    @Test func rawAliveBeyondTheCancelKeepsTheRawDisplay() {
+        // raw "abcdeX" has depth 5, the cancel was 3 keys in: 5 > 3, so no prefix rule. Composed
+        // "abcde" is a prefix (depth 5) but not 2 deeper than the raw one.
+        #expect(midWordAfterCancel("abcde", ["abcdeX"], lex, rawShownAtCancelOfLength: 3) == .raw)
+        // The very same pair with no raw cancel display would be composed.
+        #expect(midWordAfterCancel("abcde", ["abcdeX"], lex, rawShownAtCancelOfLength: nil) == .composed)
+    }
+
+    @Test func rawThatDiesAtTheCancelKeyLetsTheComposedPrefixWin() {
+        // raw "abcXd" has depth 3. Cancel 3 keys in: 3 <= 3 -> the prefix rule is back and
+        // composed "abcd" (a prefix) wins ...
+        #expect(midWordAfterCancel("abcd", ["abcXd"], lex, rawShownAtCancelOfLength: 3) == .composed)
+        // ... one key earlier (cancel 2 keys in) the raw spelling outlived the cancel: raw.
+        #expect(midWordAfterCancel("abcd", ["abcXd"], lex, rawShownAtCancelOfLength: 2) == .raw)
+    }
+
+    @Test func theMarginRuleStillSwitchesWhenRawIsAlive() {
+        // raw "abcXdexx" depth 3, cancel 2 keys in: raw outlived it. Composed "abcdexx" depth 5
+        // is 2 deeper -> composed by the margin.
+        #expect(midWordAfterCancel("abcdexx", ["abcXdexx"], lex, rawShownAtCancelOfLength: 2) == .composed)
+        // Depth difference 1 is no margin.
+        #expect(midWordAfterCancel("abcdexx", ["abcdXexx"], lex, rawShownAtCancelOfLength: 3) == .raw)
+    }
+
+    @Test func theDeepestOfSeveralRawsDecidesTheEarlyRule() {
+        // Two raw spellings (collapsed, as typed): depths 3 and 5. Cancel 3 keys in: the deepest
+        // (5) is past it -> raw, although the shallow one alone would allow the prefix rule.
+        #expect(midWordAfterCancel("abcde", ["abcXd", "abcdeX"], lex, rawShownAtCancelOfLength: 3) == .raw)
+    }
+
+    @Test func midWordAfterCancelStillRefusesAComposedFormThatAddsLetters() {
+        #expect(midWordAfterCancel("phon", ["fonn"], Lexicon(["phone"]), rawShownAtCancelOfLength: 4) == .raw)
+        #expect(midWordAfterCancel("phon", ["fonn"], Lexicon(["phone"]), rawShownAtCancelOfLength: nil) == .raw)
+    }
+
+    @Test func midWordAfterCancelWithAnUnbuiltIndexIsRaw() {
+        var stale = Lexicon()
+        stale.insert("abcdefg")
+        #expect(midWordAfterCancel("abc", ["abcc"], stale, rawShownAtCancelOfLength: 1) == .raw)
+        #expect(midWordAfterCancel("abc", ["abcc"], stale, rawShownAtCancelOfLength: nil) == .raw)
+    }
+
     // MARK: the subsequence guard
     //
     // Composed must be obtainable from at least one raw by DELETING characters only (what a
@@ -642,12 +703,14 @@ struct CancelKeepsLiteralMidWordDisplayTests {
     // committing, so whatever the last keystroke displayed stays on screen as final text. A
     // word whose commit is right must therefore not flip to a wrong display on its way there.
     //
-    // `missed` typed naturally: raw "miss" is a prefix of "missile", so the display keeps the
-    // raw keys at the cancel key. Later, composed "mised" becomes a prefix of "misedit" (depth
-    // 5 against raw depth 4: no margin), and the "composed is a prefix" rule alone would flip
-    // the screen to "mise" / "mised" even though the commit keeps "missed". Measured on main:
-    // `missed` is shown and committed as typed.
-    private let lex = Lexicon(["misedit", "missile"])
+    // `missed` typed naturally: raw "miss" is a prefix of "missel", so the display keeps the
+    // raw keys at the cancel key (4 keys in). The raw spelling stays alive past the cancel
+    // ("misse" still begins "missel") and dies only at the inflection, so the cancel was not a
+    // habit cancel. Later, composed "mised" becomes a prefix of "misedit" (depth 5 against raw
+    // depth 5: no margin), and the "composed is a prefix" rule alone would flip the screen to
+    // "mised" even though the commit keeps "missed". Measured on main: `missed` is shown and
+    // committed as typed.
+    private let lex = Lexicon(["misedit", "missel"])
 
     @Test func naturalMissedNeverFlashesTheCancelledSpelling() {
         #expect(typeStepwise("missed", config: on, lexicon: lex)
@@ -655,8 +718,8 @@ struct CancelKeepsLiteralMidWordDisplayTests {
         #expect(typeThroughEngine("missed ", config: on, lexicon: lex) == "missed ")
     }
 
-    // The same lexicon without the cancel pair: the display is a pure function of the keys.
-    // Typing, backspacing over the cancel key and typing it again lands on the same screen.
+    // The display is a pure function of the keys. Typing, backspacing over the cancel key and
+    // typing it again lands on the same screen.
     @Test func backspacingOverTheCancelKeyAndRetypingGivesTheSameScreen() {
         let engine = Engine(config: on)
         engine.lexicon = lex
@@ -674,21 +737,42 @@ struct CancelKeepsLiteralMidWordDisplayTests {
         #expect(direct == "missed")
     }
 
-    // A raw display at the cancel key does not freeze the word: the composed spelling still
-    // wins once it is clearly more English-like (margin 2). `missexample`: "miss" stays (a
-    // prefix of "missile"), then composed "misexa" reaches depth 6 against raw depth 4.
-    @Test func aRawChoiceAtTheCancelKeyStillSwitchesByTheMargin() {
-        let l = Lexicon(["misexamples", "missile"])
-        #expect(typeStepwise("missexample", config: on, lexicon: l)
-                == ["m", "mi", "mí", "miss", "misse", "missex", "misexa", "misexam", "misexamp",
-                    "misexampl", "misexample"])
-        #expect(typeThroughEngine("missexample ", config: on, lexicon: l) == "misexample ")
+    // The habit-cancel signature: the raw spelling dies exactly at the doubled key or one key
+    // after it. `susspend`: the raw keys "suss" are a prefix of "sussultatory" (so the display
+    // shows them at the cancel key, 4 keys in), but "sussp" is not: raw depth 4 is no deeper
+    // than the cancel key's position, so the composed "susp" (a prefix of "suspend") takes over
+    // at once instead of waiting for the margin. This is what the early rule is for.
+    @Test func aRawSpellingThatDiesRightAtTheCancelKeyGivesWayToTheComposedPrefix() {
+        let l = Lexicon(["suspend", "sussultatory"])
+        #expect(typeStepwise("susspend", config: on, lexicon: l)
+                == ["s", "su", "sú", "suss", "susp", "suspe", "suspen", "suspend"])
+        #expect(typeThroughEngine("susspend ", config: on, lexicon: l) == "suspend ")
+    }
+
+    // `classs` is the same signature one key later (raw "class" is the word at the cancel key,
+    // raw "classs" is no prefix): the screen shows `class` after the 6th key.
+    @Test func classsShowsClassAfterTheSixthKey() {
+        let l = Lexicon(["class", "clasp"])
+        #expect(typeStepwise("classs", config: on, lexicon: l).last == "class")
+    }
+
+    // A raw display at the cancel key does not freeze the word either: the composed spelling
+    // still wins by the margin (2) when the raw one is alive well past the cancel. Composed
+    // "misilexample" is a prefix of "misilexamples" (depth grows with every key), raw
+    // "missilexample" is a prefix of "missiles" up to "missile" (depth 7, past the cancel at 4).
+    // The screen stays raw until composed is 2 letters deeper, which happens at the 10th key.
+    @Test func aRawChoiceAliveBeyondTheCancelStillSwitchesByTheMargin() {
+        let l = Lexicon(["misilexamples", "missiles"])
+        let steps = typeStepwise("missilexample", config: on, lexicon: l)
+        #expect(steps == ["m", "mi", "mí", "miss", "missi", "missil", "missile", "missilex",
+                          "missilexa", "misilexam", "misilexamp", "misilexampl", "misilexample"])
+        #expect(typeThroughEngine("missilexample ", config: on, lexicon: l) == "misilexample ")
     }
 
     // The other branch is today's behavior: when the cancel key itself was displayed as the
     // COMPOSED spelling (`uns`, `tas`), later keys follow the prefix rule as before.
     @Test func aComposedChoiceAtTheCancelKeyKeepsFollowingThePrefixRule() {
-        // "tas" is a prefix of "task", "tass" is not: composed at the cancel key.
+        // "tas" is a prefix of "task", "tass" is not: composed at the cancel key; `task` at k.
         let l = Lexicon(["task"])
         #expect(typeStepwise("tassk", config: on, lexicon: l) == ["t", "ta", "tá", "tas", "task"])
         let u = Lexicon(["unsuspected"])

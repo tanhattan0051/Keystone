@@ -81,6 +81,19 @@ struct LexiconLoaderTests {
         #expect(Set(words).count == words.count)
     }
 
+    // The `sys*` tools the author types daily: habit typing (`syssadmin`) can only come out as
+    // the real word if the composed spelling is a listed word (see DECISIONS.md "Cancel keeps
+    // the literal"). `sysstat` is deliberately NOT protected, see there.
+    @Test func supplementaryWordsListTheSysadminTools() {
+        let loaded = LexiconLoader.load(
+            systemWordsPath: "/nonexistent/path/\(UUID().uuidString)/words.txt")
+        for w in ["sysadmin", "sysctl", "sysfs", "sysinfo", "sysprep", "systemd", "systemctl"] {
+            #expect(SupplementaryWords.all.contains(w), "\(w) missing from SupplementaryWords.all")
+            #expect(loaded.contains(w))
+        }
+        #expect(!SupplementaryWords.protectedRealWords.contains("sysstat"))
+    }
+
     @Test func supplementaryWordsCoversAFewHundredEntries() {
         #expect(SupplementaryWords.all.count >= 150)
     }
@@ -107,14 +120,6 @@ struct LexiconLoaderTests {
 
     @Test func protectedRealWordsCoversTheFullFalsePositiveList() {
         for w in Self.falsePositiveWords {
-            #expect(SupplementaryWords.protectedRealWords.contains(w), "\(w) missing from protectedRealWords")
-        }
-    }
-
-    // Added with the cancel rule (`RestoreDecision.chooseAfterCancel`): natural words it
-    // misread because the 1934 list lacks them (see DECISIONS.md "Cancel keeps the literal").
-    @Test func protectedRealWordsCoverTheWordsTheCancelRuleMisread() {
-        for w in ["sysstat", "sassiness", "misscanned", "misscanning"] {
             #expect(SupplementaryWords.protectedRealWords.contains(w), "\(w) missing from protectedRealWords")
         }
     }

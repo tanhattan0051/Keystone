@@ -108,29 +108,42 @@ struct LexiconRealDictionaryTests {
                 "natural typing of \(w)")
     }
 
-    // Real words the 1934 list lacks, whose natural typing the depth rule misread. They are in
-    // `SupplementaryWords.protectedRealWords` now, so rule 1 (a raw that is a word) keeps them.
-    private static let protectedByTheCancelRule: [String] = [
-        "sysstat", "sassiness", "misscanned", "misscanning",
+    // MARK: - Habit-typed sysadmin words.
+    //
+    // The author types `sy` + `s` and sees `sý`; the second `s` cancels the tone. The lexicon
+    // (`SupplementaryWords.all`) knows these words, so the composed spelling wins by rule 2.
+    // Natural `systems` and habit `sysstems` must both commit `systems`: the dictionary has no
+    // word that starts with `sysst`, so the raw spelling is not English-like (a protected word
+    // `sysstat` would make it one and break habit `systems`/`systemd`, see DECISIONS.md).
+    private static let habitSysadminWords: [(typed: String, committed: String)] = [
+        ("syssadmin", "sysadmin"), ("syssctl", "sysctl"), ("syssfs", "sysfs"),
+        ("syssinfo", "sysinfo"), ("syssprep", "sysprep"), ("sysstemd", "systemd"),
+        ("sysstemctl", "systemctl"), ("sysstems", "systems"), ("systems", "systems"),
     ]
 
-    @Test(arguments: protectedByTheCancelRule)
-    func protectedRealWordCommitsAsTypedWithTheCancelRuleOn(_ w: String) {
-        #expect(typeAndFlush(w, config: Self.cancelRuleOn, lexicon: realLexicon) == w,
-                "natural typing of \(w)")
+    @Test(arguments: habitSysadminWords)
+    func habitTypedSysadminWordCommitsWithoutTheCancelKey(_ word: (typed: String, committed: String)) {
+        #expect(typeAndFlush(word.typed, config: Self.cancelRuleOn, lexicon: realLexicon) == word.committed,
+                "habit typing of \(word.committed)")
     }
 
     // The residue the two guards cannot remove: a morpheme-boundary double in a code word
-    // (`insstr`, curses), an ALL-CAPS constant (`OSSTRING`) and a foreign proper noun
-    // (`Alessandro`) look, at the keystroke level, exactly like a habit-typed `instr` /
-    // `OSTRING` / `Alesandro`; only the dictionary could tell them apart and it does not know
-    // them. Each loses exactly ONE letter (the exactly-one-key guard makes more impossible).
+    // (`insstr`, curses; `sysstat`, the sysadmin tool), an ALL-CAPS constant (`OSSTRING`), a
+    // foreign proper noun (`Alessandro`) and a real word the 1934 list lacks (`sassiness`,
+    // `misscanned`, `misscanning`) look, at the keystroke level, exactly like a habit-typed
+    // `instr` / `systat` / `OSTRING` / `Alesandro` / `sasiness`; only the dictionary could tell
+    // them apart and it does not know them. Each loses exactly ONE letter (the guard admits a
+    // word only when a single key vanished, so a second letter cannot be lost). `sysstat` and
+    // the other three are NOT protected on purpose: a protected entry becomes a dictionary
+    // PREFIX and breaks habit typing of common words (`systems` -> `sysstems`), see DECISIONS.md.
     // This pins what is COMMITTED today, as a documented limitation and not an endorsement: a
     // change to the margin or the guards moves it, and then this test must be updated on
     // purpose, with the numbers re-measured. DECISIONS.md "Cancel keeps the literal" has the
     // measured size of the residue.
     private static let acceptedResidue: [(typed: String, committed: String)] = [
         ("insstr", "instr"), ("Alessandro", "Alesandro"), ("OSSTRING", "OSTRING"),
+        ("sysstat", "systat"), ("sassiness", "sasiness"),
+        ("misscanned", "miscanned"), ("misscanning", "miscanning"),
     ]
 
     @Test(arguments: acceptedResidue)
