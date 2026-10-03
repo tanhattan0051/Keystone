@@ -1697,6 +1697,12 @@ in the lexicon" — that claim is false (see "Known limitation" below); it is
 conditions above aren't ALL met, that keeps things safe regardless of what
 is or isn't in the lexicon.
 
+**Exception, added later.** A Telex word whose tone was cancelled and that has no
+tone or vowel mark left is decided by `RestoreDecision.chooseAfterCancel`
+instead of `choose` (dictionary-prefix English-likeness, so `unssuspend` commits
+`unsuspend` although `unsuspend` is unlisted) — see "Cancel keeps the literal:
+English-likeness by dictionary prefixes" below.
+
 **Dormant-at-engine / enabled-by-app, the same pattern as
 `freeMarkAcrossCoda`.** `Engine.lexicon: Lexicon?` defaults `nil` — with no
 lexicon installed, `RestoreDecision.choose` always returns `.raw`, so every
@@ -2031,8 +2037,10 @@ semantics" above; OpenKey's own `removeMark()`, the `z` handler, never
 touches `tempDisableKey` either), so typing `z` never enters literal mode.
 
 **How it composes with the lexicon restore.** `literalAfterCancel` only
-changes what gets COMPOSED; `RestoreDecision` (see above) is unchanged and
-still runs afterward. For a word like `classs`, the flag alone (even with
+changes what gets COMPOSED; `RestoreDecision` (see above) still runs afterward
+(for a cancelled word with no tone or vowel mark left, `chooseAfterCancel`
+replaces `choose` — see "Cancel keeps the literal: English-likeness by
+dictionary prefixes" below). For a word like `classs`, the flag alone (even with
 `restoreIfInvalid` off and no lexicon) already composes the right spelling
 character-for-character, because every key after the cancel is now literal:
 `class` — nothing left to restore. For a word like `tassk`, the flag makes
@@ -2186,7 +2194,10 @@ boundary commit: once a word goes dead, it stays showing its raw keystrokes
 verbatim for the rest of that word (backspacing past the dead keystroke
 naturally un-restores it too, since `rerender` always re-folds the whole of
 `rawKeys` from scratch — no separate state to unwind, same as
-`literalAfterCancel`'s `cancelled` local).
+`literalAfterCancel`'s `cancelled` local). One exception, added later: right
+after a Telex cancel the composed spelling can be shown instead when it is
+clearly the more English-like one (`uns`, not `unss`) — see "Cancel keeps the
+literal: English-likeness by dictionary prefixes" below.
 
 **The safety guarantee, and how it's proven.** The hard requirement: with
 `spellCheck` on, every REAL Vietnamese word renders byte-identical —
@@ -2421,3 +2432,320 @@ per-app code, not by the tap callback. The pure decision logic is the testable
 `SecureInputTracker` in `KeystoneInput` (`SecureInputTrackerTests`); `AppModel`
 is only the thin sampler. `SystemState.secureInputActive` in `Contracts.swift`
 stays as pre-existing, unused scaffolding: it was deliberately not touched.
+
+## Cancel keeps the literal: English-likeness by dictionary prefixes
+
+**Bug (reported again 2026-10-02/03 on the installed 1.1.6: `unssuspend`,
+`unsspend`, `susspend`).** The author types English inside Vietnamese Telex
+with OpenKey habits. He sees a tone appear (`u n s` → `ún`) and presses the
+key again to cancel it. `literalAfterCancel` already composes the right
+literal (`uns`, then every later key literal), but `spellCheck`'s eager
+restore then calls that composition DEAD (coda `ns`) and shows the RAW keys,
+cancel key included (`unss…`), and at the boundary `RestoreDecision.choose`
+only rescues the composed word when it is IN the dictionary (`suspend` yes,
+`unsuspend` no), so `unssuspend` committed.
+
+**First attempt, reverted** (commits `340c614`, `d4cd7ea`, `0424246`, reverted
+in `ccee5a9`). After a cancel it kept the cancelled composition unless the raw
+spelling was itself a dictionary word. That broke correctly typed English the
+1934-Webster list lacks (`messages` → `mesages`, `processing` → `procesing`,
+`diff` → `dif`): about 1 word in 160 of real prose. Its gates (Telex only,
+`Composition.cancelled`, no tone and no vowel mark) were fine; its DECISION
+RULE was the problem, so this design keeps the gates and replaces the rule.
+
+**The rule.** Compare two spellings of the word and keep the more
+ENGLISH-LIKE one, with the dictionary asked about PREFIXES, not only whole
+words. "Depth" of a string is how many of its leading letters still begin SOME
+dictionary word (`Lexicon.prefixDepth`; `Lexicon.isPrefix` is one step of it).
+`RestoreDecision.chooseAfterCancel(composed:raws:lexicon:atCommit:composedMayWinAsPrefix:)`
+(the last parameter is the mid-word rule described below, default `true`), all
+strings lowercased, `raws` = the `ww`/`ddd`-collapsed raw word and the keys as
+typed (the deepest counts, and identical strings are evaluated once):
+
+- Guard, first, in both modes: unless `composed` is a SUBSEQUENCE of at least
+  one raw (obtainable by deleting characters only, which is all a cancel does)
+  → raw. See "The subsequence guard" below.
+- At commit (`atCommit: true`): (1) any raw is a word → raw; (2) composed is a
+  word → composed; (3) depth(composed) ≥ max depth(raw) + 2 → composed;
+  (4) otherwise raw.
+- While typing (`atCommit: false`, display only): the same with "is a prefix"
+  in place of "is a word" in (1) and (2), because the word may be unfinished.
+
+So the cancelled form wins only when it is a word, or when it stays
+English-like for at least 2 more letters than the raw spelling.
+`unssuspend` (lexicon has `unsuspected`): composed `unsuspend` depth 7, raw 3
+→ `unsuspend`. `messages`: raw depth 7 (`message` + `s`), composed `mesages`
+3 → `messages`.
+
+**Why margin 2.** Measured with a throwaway prototype on 159,287 words of real
+English (22 man pages + the repo's docs, 6,977 distinct words) against main
+`d0d3837`, "habit" = after each intended letter, if the screen shows a
+Vietnamese mark the writer did not intend, press the same key once more.
+
+SCOPE OF THIS TABLE: that corpus is LOWERCASED, letters-only English prose. It
+has no letter case, almost no identifiers and few proper nouns, so "0 words
+newly wrong" below is a statement about THAT corpus, not a property of the
+rule. The out-of-corpus run in "What the corpus could not see" shows what the
+table missed. The last column is the shipped rule, measured after the final
+review's fixes (the two guards and the mid-word rules, all described below);
+the first two are the prototype the margin was chosen on.
+
+| | main d0d3837 | margin 2 (prototype) | shipped |
+|---|---|---|---|
+| natural typing, final output correct | 87.60% | 87.60% (0 words newly wrong) | 87.60% (0 newly wrong) |
+| natural typing, on-screen before the space correct | 83.33% | 83.32% (6 rare words: troff, missed, presses, perrig, ...) | 83.32% (3 words: `troff`, and the habit strings `tassk`, `classs`, which are meant to change) |
+| OpenKey habit, final correct | 87.13% | 89.39% (0 newly wrong, 408 newly right) | 89.39% (0 newly wrong, 409 newly right) |
+| OpenKey habit, on-screen before the space correct | 71.10% | 87.51% | 86.37% (1 newly wrong, `classs`) |
+
+Two variants were measured and rejected. **Margin 1** broke 9 real words
+(`lesskey`, `onerror`, `nonbootable`, ...): a natural double whose composed
+form happens to keep matching the dictionary one letter longer (`onerror`:
+composed `oneror` depth 5 via `onerous`, raw depth 4). **-s/-ed/-es stem
+rules** (treat `thiss` as `this` + `s`) broke the habit case. The real
+implementation, before the final review's fixes, reproduced the prototype's
+numbers exactly, with or without the subsequence guard.
+
+**The subsequence guard.** `choose` has refused, since the lexicon restore was
+introduced, a composed word that ADDS letters to the raw keys (`nike` → `niche`,
+`sinning` → `singing`): with `quickTelex`, `quickStartConsonant` or
+`quickEndConsonant` on, the fold itself can put letters in the composed word
+that were never typed (cc → ch, f → ph, k → ch). A word that is also cancelled
+(`fonss` with `quickStartConsonant`: composed `phons`) passes the cancel gate
+and, if the expanded spelling happens to be listed or deep enough, would be
+committed as `phons`. `chooseAfterCancel` therefore starts with the same
+test `choose` uses (`RestoreDecision.isSubsequence`), applied to the lowercased
+composed word against EACH raw candidate, and answers `.raw` unless at least one
+raw can be turned into the composed word by deleting characters. It applies to
+the mid-word display as well as to the commit, so the screen never shows an
+expansion the commit would refuse. Looser than `choose` in one respect, on
+purpose: any one of the two raw candidates may satisfy it (the keys as typed
+keep a `ww` that the collapsed raw dropped), so it never rejects a pure
+deletion. The measured corpus numbers are unchanged by it (see below). A cancel
+that fires with no quick expansion in the word is a pure deletion, so the guard
+is invisible to the habit case.
+
+**Where it applies** (`Engine.cancelledLiteralApplies`, true iff ALL of):
+
+- `literalAfterCancel` is on and `Composition.cancelled` (a same-key double
+  strike fired in this word; `Telex.fold` and `VNI.fold` both set it).
+- The input method is NOT VNI. A VNI cancel key is a DIGIT and digits are
+  ordinary text (`win11`, `ubuntu22.04`); the rule would silently drop one.
+  Simple Telex folds through `Telex` and is covered. VNI is byte-identical to
+  main.
+- A lexicon with a BUILT prefix index is present. Without one there is no
+  evidence and the engine behaves exactly as main (see below).
+- `tone == .ngang` and every VOWEL cell has `mark == .none`. If the cancel
+  leaves a mark (`vieetss`: the sắc is cancelled but `ê` stays) the word is
+  still a Vietnamese attempt and the existing restore handles it. Consonant
+  cells (a `dStroke` đ) are ignored.
+- EXACTLY ONE key vanished (`RestoreDecision.cancelDeletedExactlyOneKey`):
+  typed keys minus cells left is 1, or is 1 for the `ww`/`ddd`-collapsed keys.
+  A habit cancel deletes one key; more means an earlier tone key was swallowed
+  too, which is a natural word (`boundsError` → `boundEror` would lose two
+  letters). Added by the final review.
+- The word does NOT mix letter case (`RestoreDecision.mixesLetterCase`: a
+  lowercase letter AND an uppercase letter after the first key). camelCase and
+  PascalCase identifiers and names (`isString`, `OSString`, `McDonald`) keep
+  main's behavior; plain, Capitalized and ALL-CAPS words keep the rule. Added by
+  the final review.
+
+It changes two places and nothing else: `rerender()`'s eager-restore branch
+shows `encode(comp)` instead of the raw keys when the mid-word choice is
+composed (see "The mid-word display after a cancel"), and `finalize`'s restore
+branch asks `chooseAfterCancel` first (the force-English branch before it still
+wins, and every other word still goes through `RestoreDecision.choose`
+unchanged). Capitalization is applied to
+whichever spelling wins (`unssuspend ` at a sentence start → `Unsuspend `).
+
+**What the corpus could not see (final review).** The first measurements were
+all on the lowercased prose corpus above, and the dictionary sweep below types
+only words the lexicon lists (rule 1 always answers raw for those). Neither can
+see identifiers, names or compounds. The final review therefore ran the engine
+on 99,659 distinct CASE-PRESERVING tokens that contain an adjacent doubled pair
+(the only tokens a cancel can fire on), taken from 46.6M words of text the
+corpus never contained: the other macOS and SDK man pages, the Go standard
+library, ObjC framework headers, the Python standard library, Swift interfaces,
+npm and Homebrew docs, a Homebrew git log, the macOS word lists beyond
+`words` (propernames, web2a, connectives) and this repo's own sources. Natural
+typing, compared with main:
+
+- Before the guards: 304 distinct tokens (2,478 occurrences) committed with
+  letters missing where main committed them as typed; 267 of them (2,370
+  occurrences) were correctly typed natural words. camelCase and PascalCase
+  identifiers (`boundsError` → `boundEror`, `addSuccess` → `adducces`,
+  `isString`, `OSString`), a few names (`Montserrat` → `Monterat`), some losing
+  two letters at once. Two mechanisms: a double that forms across a case
+  boundary (`is|String`: the tone key of `is` is cancelled by the capital S), and
+  a tone key swallowed earlier in the word (`bounds|E|rr|or`: the `s` and one `r`
+  vanish together).
+- The two guards above (exactly one key vanished; no mixed case) remove most of
+  that and move no habit word on the 6,977-word corpus. Alone, on the same
+  tokens, the one-key guard leaves 210 tokens (1,942 occurrences) newly wrong and
+  the case guard 82 (489); together, **64 tokens (350 occurrences) remain, about
+  1 occurrence in 133,000 words** of code and man pages. Of those, 8 tokens (41
+  occurrences) are this repo's own deliberate habit strings (`unssuspend`, ...),
+  which the rule is meant to change, and 14 tokens (41 occurrences) are mostly
+  misspellings or tripled letters that it "corrects" (`preceeded` → `preceded`,
+  `occassions`, `messsages`). The other 42 tokens (268 occurrences, about 1 in
+  174,000 words) are the residue.
+- Habit typing on the same tokens: 12 newly wrong (57 occurrences, against 84 /
+  457 before the guards) and 1,792 newly right (115,255 occurrences).
+
+**The residue, by class.** All of these are a double letter at a morpheme
+boundary or in a foreign spelling, which at the keystroke level is
+indistinguishable from a habit cancel: natural `sysstat` looks exactly like
+habit-typed `systat` (`sý`, then another `s`), and only the dictionary can tell
+them apart.
+
+- Code and sysadmin words: `insstr` (curses), `sysstat` and its relatives
+  (`sysstatfs`, `sysstatvfs`), `upsshutdown`, `defflow`, `transspec`, `reffile`,
+  `arrlen`, `isstring`, `defframe`, `deffunc`, `classhints`.
+- ALL-CAPS constants and mnemonics (ALL-CAPS keeps the rule): `OSSTRING`,
+  `UPSSHUTDOWN`, `ERREMOTE`, `DEFFILEMODE`, `INFFLAGS`, the Go assembler's
+  `AXXSETACCZ` and `AXXBR*`.
+- Foreign proper nouns: `Alessandro`, `Kirrily`, `Janssen`, `Herrmann`.
+- A few foreign-language words in man pages (`januaari`), and real English words
+  the 1934 list lacks (`sassiness`, `misscanned`, `misscanning`).
+
+**A residue loses a letter, never more than one.** `insstr` commits as `instr`,
+`Alessandro` as `Alesandro`, `sysstat` as `systat`. What the one-key guard checks
+is that the typed keys exceed the cells left by exactly one, OR that the
+`ww`/`ddd`-collapsed keys do (with a `ww` escape the typed keys alone can exceed
+them by two, and one of those two is the escape the writer meant). So the rule
+drops one letter relative to what the writer meant, never two. The rule is a
+heuristic that was measured, not a guarantee; this paragraph is the measured
+size of what it gets wrong. Seven residue words are pinned by
+`LexiconRealDictionaryTests` as accepted limitations
+(`acceptedResidueStillLosesOneLetter`), so a change to the margin or the guards
+cannot move them unnoticed.
+
+**Why `sysstat` and the other residue words are NOT protected.** The first fix
+round added `sysstat`, `sassiness`, `misscanned` and `misscanning` to
+`SupplementaryWords.protectedRealWords` so that a raw spelling that is a word
+wins by rule 1. The re-review found the cost: a protected entry also becomes a
+dictionary PREFIX, which changes the depth of every raw spelling that starts
+like it. With `sysstat` listed, the raw spelling `sysst…` is a prefix (depth 5)
+and the composed `system…` (depth 6) no longer clears margin 2, so habit-typed
+`systemd` committed `sysstemd`, `systems` committed `sysstems`, and the whole
+`system*` family that is not itself listed went wrong (five of them on the
+prose corpus alone: `systems`, `systemsetup`, `systemreadwrite`,
+`systemstatecache`, `systemuiserver`); `misscanned` did the same to
+habit-typed `miscalibrated`. Those habit words are far more frequent for this
+author than the natural words being protected, so all four entries were removed
+and the four words became residue (above). The existing `protectedRealWords`
+entries were chosen for a different reason (each one's collapsed spelling is a
+different real word); this round did not re-measure them for the prefix effect.
+
+What was added instead, in `SupplementaryWords.all`: the `sys*` tools the author
+types daily with the cancel habit, so that the composed spelling is a WORD and
+wins by rule 2 (`syssadmin` → `sysadmin`, `syssctl` → `sysctl`, `sysstemd` →
+`systemd`; also `sysfs`, `sysinfo`, `sysprep`; `systemctl` was already there).
+Pinned against the real dictionary by `LexiconRealDictionaryTests`
+(`habitTypedSysadminWordCommitsWithoutTheCancelKey`, which also pins natural
+`systems` and habit `sysstems` both committing `systems`).
+
+**The mid-word display after a cancel (final review).** `rerender` decides
+what the screen shows while the word is still being typed, and `finalize`
+corrects it at the boundary. But a mouse click (`EventTapController`: left or
+right mouse-down → `resetBuffer`) and a Cmd/Ctrl/Option chord (`KeyTranslator` →
+`.resetPassthrough` → `Engine.reset()`) reset the engine WITHOUT committing, so
+whatever the last keystroke displayed stays on screen as final text: "I missed"
+followed by a click on Send, or Cmd+Enter, must not leave "I mised". The first
+version of the rule flashed exactly that: raw `miss` is a prefix of `missile`,
+so the cancel key showed the raw keys, but a later key made composed `mise` a
+prefix of some word and the "composed is a prefix" rule flipped the screen to
+the composed spelling, although the commit keeps `missed`.
+
+The rule now (`RestoreDecision.chooseMidWordAfterCancel`, called by
+`Engine.midWordChoiceAfterCancel`): re-derive, from `rawKeys` alone (no new
+engine state, so Backspace needs nothing), the keystroke where the cancel fired
+(the shortest prefix whose fold reports `cancelled`; `cancelLength` is its
+number of keys). If the mid-word choice AT that keystroke was COMPOSED (`unss` →
+`uns`, `tass` → `tas`), behavior is unchanged. If it was RAW, later keys may
+switch the display to the composed spelling only through the margin rule
+(composed depth ≥ max raw depth + 2), never because the composed spelling merely
+"is a prefix" (`composedMayWinAsPrefix: false`) — with one EARLY exception: when
+the deepest raw spelling has `prefixDepth <= cancelLength`, i.e. the raw
+spelling stopped being a dictionary prefix at or before the cancel key's own
+position, the prefix rule is back. Raw that dies exactly at the doubled key is
+the habit-cancel signature (`susspend` dies at `sussp`, `classs` at `classs`),
+whereas a natural word dies later, at an inflection beyond the cancel (`missed`
+dies at `missed`: `misse` still begins `missel`). The commit-time choice is
+unchanged.
+
+Measured cost and gain, three versions. Natural words whose COMMIT is right but
+which showed a wrong spelling before the space, on the 99,659 out-of-corpus
+tokens: 243 tokens (4,912 occurrences) with the first version (no sticky rule),
+97 (2,042) with the sticky rule alone, 137 (3,082) with the early exception. The
+words the early exception adds are natural words whose raw spelling dies right
+after a cancel-shaped double: `errp`, `errb`, `perrno`, `arrp`, `verrc` (raw
+`err` is a prefix of `error`, `errp` is not, so `erp` is shown until the space,
+which commits `errp`). Habit typing on-screen before the space on the 6,977-word
+corpus: 87.51% first version, 83.40% sticky alone (`classs` showed `classs`
+until the space), 86.37% now (main 71.10%). Natural on-screen before the space:
+83.33% = main for the first two (1 word, `troff`), 83.32% now (`troff` plus the
+habit strings `tassk` and `classs` typed literally, which the rule is meant to
+change). Habit FINAL output is not changed by any of this (89.39%).
+
+**The prefix index and the tap thread.** `Lexicon` keeps a sorted array of its
+lowercase words (`isPrefix` and `prefixDepth` are lower-bound binary searches,
+no per-call allocation of the lexicon). Sorting ~236k words costs a fraction of
+a second, so it happens ONLY where the lexicon is already built off the main and
+tap threads: `LexiconLoader.load` calls `buildPrefixIndex()` once after its
+inserts (`init<S>` and `parse` build it for the small test and force-English
+lists). It is never sorted in `Engine` or `EngineController.setLexicon`, which
+run under the per-keystroke lock. `insert` of a new word marks the index stale;
+a stale or never-built index answers `false`/`0`, and the engine additionally
+requires `isPrefixIndexBuilt`, so an unindexed lexicon falls back to main's
+behavior byte for byte instead of preferring the composed form on thin
+evidence. `LexiconLoaderTests` pins that the loader builds it (a forgotten
+build would otherwise turn the feature off without any failure), and
+`CancelKeepsLiteralTests` pins the engine gate with a case where a built index
+and a stale one give different answers (`arrowweed` with only its composed
+spelling listed: the stale lexicon must give main's `arroweed`).
+
+**Verification.** Sweep of every all-lowercase-ASCII word of
+`/usr/share/dict/words` (210,773 words, typed through `Engine` with the real
+`LexiconLoader.load()` lexicon and the force-English list, config
+Telex + restoreIfInvalid + literalAfterCancel + spellCheck), compared with an
+engine built from `git archive d0d3837`: 0 differences in the committed output
+and 0 in the on-screen word before the space (re-run after the subsequence
+guard and again after the final review's fixes). The sweep cannot see
+identifiers or names, which is why the out-of-corpus run above exists: any
+future change to the margin or the guards has to be measured on a
+case-preserving token list from code, man pages and docs as well, not only on
+the prose corpus and the sweep. The 14-row behavior table is pinned by
+`CancelKeepsLiteralTests.swift` (rows 11-13, the cases that must NOT change,
+hold strings measured on main before `Engine.swift` was touched), the pure
+prefix queries by `LexiconTests.swift`, the margin boundary (difference 1 →
+raw, 2 → composed), the subsequence guard, the mid-word switch and the early
+exception (boundary `rawDepth <= cancelLength` in both directions) by
+`ChooseAfterCancelTests`, the two guards by `CancelGuardsTests` (pure) and, through
+the engine, by `CancelKeepsLiteralNaturalTypingStaysAsTyped` (`boundsError`,
+`isString`, `addSuccess`, `OSString`, `Montserrat`, each guard alone has a word
+only it rejects; strings measured on main), against the real dictionary by
+`LexiconRealDictionaryTests`, the mid-word display by
+`CancelKeepsLiteralMidWordDisplay` (natural `missed` shows `missed`, `classs`
+shows `class` after the 6th key, `susspend` shows `susp` at the 5th), and the
+subsequence guard through the engine,
+with each quick-consonant toggle on, by `CancelKeepsLiteralQuickConsonantsTests`.
+
+**Accepted trade-offs.**
+
+- Display and commit are decided separately, so a few natural words still flash
+  the composed form before the space (137 tokens, 3,082 occurrences in 46.6M
+  words, e.g. `errp` shows `erp`; on the prose corpus only `troff`). They commit
+  correctly at a space or any other boundary. After a mouse click or a
+  Cmd/Ctrl/Option chord the engine resets without committing, and whatever was
+  displayed stays; that is why the sticky rule above exists, and why it is not
+  zero.
+- It is a measured heuristic, not a guarantee. 89.39% of habit-typed words on the
+  corpus come out right, not 100%. A natural word whose composed form is
+  accidentally 2+ letters deeper in the dictionary than its raw one, and that the
+  lexicon does not list, loses the doubled letter, exactly one letter (see "The
+  residue, by class": code and sysadmin words, ALL-CAPS constants, foreign proper
+  nouns). On the 46.6M-word run that is about 1 occurrence in 174,000 words.
+  Protecting such words in `protectedRealWords` does not fix it, it breaks habit
+  typing of common words (see "Why `sysstat` ... NOT protected").
+- Escape hatch: turn off "Huỷ dấu xong thì gõ tiếp chữ thường (như OpenKey)"
+  (`literalAfterCancel`), or `useLexicon`, and the old behavior comes back.

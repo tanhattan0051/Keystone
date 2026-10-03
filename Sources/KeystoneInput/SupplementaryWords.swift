@@ -149,6 +149,13 @@ public enum SupplementaryWords {
         "xargs", "dmarc", "exim", "iframe", "nodejs", "haproxy", "firebase",
         "pytest", "eslint", "websocket", "vhost", "laravel", "jquery",
         "flexbox",
+        // The `sys*` tools typed daily with the OpenKey habit (`sy` + `s` shows `sý`, the second
+        // `s` cancels it: `syssadmin`). Listed here so the composed spelling is a WORD and wins
+        // (`sysadmin`, not `syssadmin`). `sysstat` is deliberately not listed in either list:
+        // a protected `sysstat` makes the raw spelling `sysst…` a dictionary prefix and habit
+        // `systemd`/`systems` would then commit as `sysstemd`/`sysstems`, see DECISIONS.md
+        // "Cancel keeps the literal".
+        "sysadmin", "sysctl", "sysfs", "sysinfo", "sysprep", "systemd",
     ]
 
     // MARK: - Social & chat

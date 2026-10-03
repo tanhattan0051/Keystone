@@ -27,6 +27,9 @@ struct Cell: Equatable {
 struct Composition: Equatable {
     var cells: [Cell] = []
     var tone: Tone = .ngang
+    /// A same-key double-strike cancel fired in this word (only ever true when
+    /// `literalAfterCancel` is on).
+    var cancelled: Bool = false
 }
 
 /// The effect the previous key produced — used for double-strike detection.
@@ -88,7 +91,7 @@ enum Telex {
             prevChar = lo
             prevEffect = effect
         }
-        return Composition(cells: cells, tone: tone)
+        return Composition(cells: cells, tone: tone, cancelled: cancelled)
     }
 
     // MARK: - Per-key application

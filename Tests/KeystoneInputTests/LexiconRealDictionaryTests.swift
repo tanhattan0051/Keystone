@@ -27,6 +27,12 @@ struct LexiconRealDictionaryTests {
     // this keeps every test independent/order-agnostic.
     private var realLexicon: Lexicon { LexiconLoader.load() }
 
+    @Test func realLexiconHasItsPrefixIndexBuilt() {
+        let lexicon = realLexicon
+        #expect(lexicon.isPrefixIndexBuilt)
+        #expect(lexicon.isPrefix("suspen"))
+    }
+
     // MARK: - The nine-row cancel-habit table, against the real dictionary.
 
     @Test func tassk_wantsTask() {
@@ -78,6 +84,72 @@ struct LexiconRealDictionaryTests {
     @Test(arguments: falsePositiveWords)
     func falsePositiveWordCommitsUnchanged(_ w: String) {
         #expect(typeAndFlush(w, lexicon: realLexicon) == w, "natural typing of \(w)")
+    }
+
+    // MARK: - Natural identifiers and names, with the cancel rule ON.
+    //
+    // The rule is only live with `literalAfterCancel` (every test above uses the default
+    // config, where it is off). These five were measured on main d0d3837 against this same
+    // lexicon: all commit exactly as typed, and the rule alone (without its two guards:
+    // exactly one key vanished, no mixed case) turned them into `boundEror`, `iString`,
+    // `adducces`, `OString` and `Monterat`. Found by the final review on 46.6M tokens of code
+    // and man pages the acceptance corpus did not contain.
+    private static let cancelRuleOn = EngineConfig(
+        inputMethod: .telex, restoreIfInvalid: true, allowFreeToneMark: true,
+        freeMarkAcrossCoda: true, literalAfterCancel: true, spellCheck: true)
+
+    private static let identifiersAndNames: [String] = [
+        "boundsError", "isString", "addSuccess", "OSString", "Montserrat",
+    ]
+
+    @Test(arguments: identifiersAndNames)
+    func identifierOrNameCommitsAsTypedWithTheCancelRuleOn(_ w: String) {
+        #expect(typeAndFlush(w, config: Self.cancelRuleOn, lexicon: realLexicon) == w,
+                "natural typing of \(w)")
+    }
+
+    // MARK: - Habit-typed sysadmin words.
+    //
+    // The author types `sy` + `s` and sees `sý`; the second `s` cancels the tone. The lexicon
+    // (`SupplementaryWords.all`) knows these words, so the composed spelling wins by rule 2.
+    // Natural `systems` and habit `sysstems` must both commit `systems`: the dictionary has no
+    // word that starts with `sysst`, so the raw spelling is not English-like (a protected word
+    // `sysstat` would make it one and break habit `systems`/`systemd`, see DECISIONS.md).
+    private static let habitSysadminWords: [(typed: String, committed: String)] = [
+        ("syssadmin", "sysadmin"), ("syssctl", "sysctl"), ("syssfs", "sysfs"),
+        ("syssinfo", "sysinfo"), ("syssprep", "sysprep"), ("sysstemd", "systemd"),
+        ("sysstemctl", "systemctl"), ("sysstems", "systems"), ("systems", "systems"),
+    ]
+
+    @Test(arguments: habitSysadminWords)
+    func habitTypedSysadminWordCommitsWithoutTheCancelKey(_ word: (typed: String, committed: String)) {
+        #expect(typeAndFlush(word.typed, config: Self.cancelRuleOn, lexicon: realLexicon) == word.committed,
+                "habit typing of \(word.committed)")
+    }
+
+    // The residue the two guards cannot remove: a morpheme-boundary double in a code word
+    // (`insstr`, curses; `sysstat`, the sysadmin tool), an ALL-CAPS constant (`OSSTRING`), a
+    // foreign proper noun (`Alessandro`) and a real word the 1934 list lacks (`sassiness`,
+    // `misscanned`, `misscanning`) look, at the keystroke level, exactly like a habit-typed
+    // `instr` / `systat` / `OSTRING` / `Alesandro` / `sasiness`; only the dictionary could tell
+    // them apart and it does not know them. Each loses exactly ONE letter (the guard admits a
+    // word only when a single key vanished, so a second letter cannot be lost). `sysstat` and
+    // the other three are NOT protected on purpose: a protected entry becomes a dictionary
+    // PREFIX and breaks habit typing of common words (`systems` -> `sysstems`), see DECISIONS.md.
+    // This pins what is COMMITTED today, as a documented limitation and not an endorsement: a
+    // change to the margin or the guards moves it, and then this test must be updated on
+    // purpose, with the numbers re-measured. DECISIONS.md "Cancel keeps the literal" has the
+    // measured size of the residue.
+    private static let acceptedResidue: [(typed: String, committed: String)] = [
+        ("insstr", "instr"), ("Alessandro", "Alesandro"), ("OSSTRING", "OSTRING"),
+        ("sysstat", "systat"), ("sassiness", "sasiness"),
+        ("misscanned", "miscanned"), ("misscanning", "miscanning"),
+    ]
+
+    @Test(arguments: acceptedResidue)
+    func acceptedResidueStillLosesOneLetter(_ residue: (typed: String, committed: String)) {
+        #expect(typeAndFlush(residue.typed, config: Self.cancelRuleOn, lexicon: realLexicon)
+                == residue.committed, "natural typing of \(residue.typed)")
     }
 
     // MARK: - Quick-consonant words commit raw with the relevant toggle, even

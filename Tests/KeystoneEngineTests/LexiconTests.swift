@@ -146,3 +146,115 @@ struct RestoreDecisionSubsequenceGuardTests {
         #expect(!RestoreDecision.isSubsequence("pats", of: "spat"))
     }
 }
+
+// MARK: - Prefix index (isPrefix / prefixDepth)
+//
+// The sorted-word index behind the English-likeness choice after a Telex
+// cancel (see CancelKeepsLiteralTests.swift and DECISIONS.md "Cancel keeps the
+// literal: English-likeness by dictionary prefixes"). Built eagerly by `init`
+// and `parse`; `LexiconLoader` builds it ONCE after its inserts (off the tap
+// thread); any later `insert` marks it stale until `buildPrefixIndex()`.
+
+@Suite("LexiconPrefixIndex")
+struct LexiconPrefixIndexTests {
+    @Test func isPrefixTrueForPrefixesAndWholeWords() {
+        let lex = Lexicon(["unsuspected"])
+        #expect(lex.isPrefix("u"))
+        #expect(lex.isPrefix("uns"))
+        #expect(lex.isPrefix("unsuspe"))
+        #expect(lex.isPrefix("unsuspected"))   // a word is its own prefix
+    }
+
+    @Test func isPrefixFalseWhenNoWordStartsWithIt() {
+        let lex = Lexicon(["unsuspected"])
+        #expect(!lex.isPrefix("unss"))
+        #expect(!lex.isPrefix("unsuspend"))
+        #expect(!lex.isPrefix("unsuspectedx"))   // longer than any word
+        #expect(!lex.isPrefix("x"))
+    }
+
+    @Test func isPrefixIsCaseInsensitive() {
+        let lex = Lexicon(["Task"])
+        #expect(lex.isPrefix("TAS"))
+        #expect(lex.isPrefix("tas"))
+    }
+
+    @Test func isPrefixSearchesAcrossTheWholeSortedRange() {
+        // First word, middle word, last word, and probes before/after/between
+        // them: pins the lower-bound search at both ends of the array.
+        let lex = Lexicon(["banana", "apple", "cherry"])   // deliberately unsorted input
+        for p in ["a", "app", "apple", "b", "banana", "c", "cherry"] {
+            #expect(lex.isPrefix(p), "\(p) is a prefix")
+        }
+        for p in ["0", "aa", "applf", "bb", "d", "cherryz", "z"] {
+            #expect(!lex.isPrefix(p), "\(p) is not a prefix")
+        }
+    }
+
+    @Test func isPrefixIsFalseForAnEmptyLexicon() {
+        var lex = Lexicon()
+        lex.buildPrefixIndex()
+        #expect(!lex.isPrefix("a"))
+        #expect(lex.prefixDepth("abc") == 0)
+    }
+
+    @Test func prefixDepthIsTheLongestPrefixThatStaysEnglishLike() {
+        let lex = Lexicon(["unsuspected"])
+        #expect(lex.prefixDepth("unsuspend") == 7)     // "unsuspe" yes, "unsuspen" no
+        #expect(lex.prefixDepth("unssuspend") == 3)    // "uns" yes, "unss" no
+        #expect(lex.prefixDepth("unsuspected") == 11)  // the whole word
+    }
+
+    @Test func prefixDepthOfAWordLongerThanTheLexiconWordStopsAtItsEnd() {
+        #expect(Lexicon(["message"]).prefixDepth("messages") == 7)
+    }
+
+    @Test func prefixDepthZeroCases() {
+        let lex = Lexicon(["task"])
+        #expect(lex.prefixDepth("") == 0)
+        #expect(lex.prefixDepth("xyz") == 0)
+    }
+
+    @Test func prefixDepthIsCaseInsensitive() {
+        #expect(Lexicon(["task"]).prefixDepth("TASKS") == 4)
+    }
+
+    @Test func initAndParseBuildTheIndex() {
+        #expect(Lexicon(["suspend"]).isPrefix("susp"))
+        #expect(Lexicon.parse("suspend\ntask\n").isPrefix("tas"))
+        #expect(Lexicon.parse("suspend\ntask\n").prefixDepth("tasks") == 4)
+    }
+
+    @Test func insertMarksTheIndexStaleAndBothQueriesFailClosed() {
+        var lex = Lexicon(["suspend"])
+        #expect(lex.isPrefix("susp"))
+        lex.insert("task")
+        // Stale: no answer is better than a wrong one. The engine reads
+        // `false`/`0` as "no evidence the composed form is English-like" and
+        // falls back to main's behavior.
+        #expect(!lex.isPrefix("susp"))
+        #expect(!lex.isPrefix("tas"))
+        #expect(lex.prefixDepth("suspend") == 0)
+        #expect(lex.contains("task"))   // membership never depended on the index
+    }
+
+    @Test func buildPrefixIndexMakesAStaleOrNeverBuiltLexiconAnswerAgain() {
+        var lex = Lexicon()                 // the LexiconLoader shape: empty, then inserts
+        lex.insert("suspend")
+        lex.insert("task")
+        #expect(!lex.isPrefix("susp"))      // never built
+        lex.buildPrefixIndex()
+        #expect(lex.isPrefix("susp"))
+        #expect(lex.isPrefix("tas"))
+        #expect(lex.prefixDepth("tasks") == 4)
+    }
+
+    @Test func isPrefixIndexBuiltReportsTheState() {
+        var lex = Lexicon(["suspend"])
+        #expect(lex.isPrefixIndexBuilt)
+        lex.insert("task")
+        #expect(!lex.isPrefixIndexBuilt)
+        lex.buildPrefixIndex()
+        #expect(lex.isPrefixIndexBuilt)
+    }
+}
