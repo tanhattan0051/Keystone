@@ -2461,6 +2461,9 @@ dictionary word (`Lexicon.prefixDepth`; `Lexicon.isPrefix` is one step of it).
 strings lowercased, `raws` = the `ww`/`ddd`-collapsed raw word and the keys as
 typed (the deepest counts):
 
+- Guard, first, in both modes: unless `composed` is a SUBSEQUENCE of at least
+  one raw (obtainable by deleting characters only, which is all a cancel does)
+  → raw. See "The subsequence guard" below.
 - At commit (`atCommit: true`): (1) any raw is a word → raw; (2) composed is a
   word → composed; (3) depth(composed) ≥ max depth(raw) + 2 → composed;
   (4) otherwise raw.
@@ -2490,7 +2493,27 @@ Two variants were measured and rejected. **Margin 1** broke 9 real words
 form happens to keep matching the dictionary one letter longer (`onerror`:
 composed `oneror` depth 5 via `onerous`, raw depth 4). **-s/-ed/-es stem
 rules** (treat `thiss` as `this` + `s`) broke the habit case. The real
-implementation reproduces the prototype's numbers exactly.
+implementation reproduces the prototype's numbers exactly, with or without the
+subsequence guard.
+
+**The subsequence guard.** `choose` has refused, since the lexicon restore was
+introduced, a composed word that ADDS letters to the raw keys (`nike` → `niche`,
+`sinning` → `singing`): with `quickTelex`, `quickStartConsonant` or
+`quickEndConsonant` on, the fold itself can put letters in the composed word
+that were never typed (cc → ch, f → ph, k → ch). A word that is also cancelled
+(`fonss` with `quickStartConsonant`: composed `phons`) passes the cancel gate
+and, if the expanded spelling happens to be listed or deep enough, would be
+committed as `phons`. `chooseAfterCancel` therefore starts with the same
+test `choose` uses (`RestoreDecision.isSubsequence`), applied to the lowercased
+composed word against EACH raw candidate, and answers `.raw` unless at least one
+raw can be turned into the composed word by deleting characters. It applies to
+the mid-word display as well as to the commit, so the screen never shows an
+expansion the commit would refuse. Looser than `choose` in one respect, on
+purpose: any one of the two raw candidates may satisfy it (the keys as typed
+keep a `ww` that the collapsed raw dropped), so it never rejects a pure
+deletion. The measured corpus numbers are unchanged by it (see below). A cancel
+that fires with no quick expansion in the word is a pure deletion, so the guard
+is invisible to the habit case.
 
 **Where it applies** (`Engine.cancelledLiteralApplies`, true iff ALL of):
 
@@ -2526,18 +2549,24 @@ a stale or never-built index answers `false`/`0`, and the engine additionally
 requires `isPrefixIndexBuilt`, so an unindexed lexicon falls back to main's
 behavior byte for byte instead of preferring the composed form on thin
 evidence. `LexiconLoaderTests` pins that the loader builds it (a forgotten
-build would otherwise turn the feature off without any failure).
+build would otherwise turn the feature off without any failure), and
+`CancelKeepsLiteralTests` pins the engine gate with a case where a built index
+and a stale one give different answers (`arrowweed` with only its composed
+spelling listed: the stale lexicon must give main's `arroweed`).
 
 **Verification.** Sweep of every all-lowercase-ASCII word of
 `/usr/share/dict/words` (210,773 words, typed through `Engine` with the real
 `LexiconLoader.load()` lexicon and the force-English list, config
 Telex + restoreIfInvalid + literalAfterCancel + spellCheck), compared with an
 engine built from `git archive d0d3837`: 0 differences in the committed output
-and 0 in the on-screen word before the space. The 14-row behavior table is pinned by `CancelKeepsLiteralTests.swift`
-(rows 11-13, the cases that must NOT change, hold strings measured on main
-before `Engine.swift` was touched), the pure prefix queries by
-`LexiconTests.swift`, the margin boundary (difference 1 → raw, 2 → composed) by
-`ChooseAfterCancelTests`.
+and 0 in the on-screen word before the space (re-run after adding the
+subsequence guard). The 14-row behavior table is pinned by
+`CancelKeepsLiteralTests.swift` (rows 11-13, the cases that must NOT change,
+hold strings measured on main before `Engine.swift` was touched), the pure
+prefix queries by `LexiconTests.swift`, the margin boundary (difference 1 →
+raw, 2 → composed) and the subsequence guard by `ChooseAfterCancelTests`, and the
+guard through the engine, with each quick-consonant toggle on, by
+`CancelKeepsLiteralQuickConsonantsTests`.
 
 **Accepted trade-offs.**
 
@@ -2549,7 +2578,3 @@ before `Engine.swift` was touched), the pure prefix queries by
   deeper in the dictionary than its raw one, and that the lexicon does not
   list, would still lose the doubled letter. Escape hatch: turn `useLexicon` or
   `literalAfterCancel` off.
-- `chooseAfterCancel` has no subsequence guard (unlike `choose`). With a
-  quick-consonant toggle on, a cancel plus a quick rewrite could in principle
-  land on an unrelated listed word; none of the measured configurations enables
-  them.

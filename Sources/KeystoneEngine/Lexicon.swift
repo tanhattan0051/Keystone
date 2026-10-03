@@ -228,6 +228,15 @@ public enum RestoreDecision {
     /// 1934-Webster list lacks (`messages` -> `mesages`): about 1 word in 160.
     /// So the dictionary is asked about PREFIXES instead (`Lexicon.prefixDepth`):
     ///
+    /// Guard, first and in both modes: unless `composed` is a SUBSEQUENCE of at
+    /// least one raw (obtainable by deleting characters only, which is all a
+    /// cancel ever does) -> `.raw`. A quick-consonant toggle (`quickTelex`,
+    /// `quickStartConsonant`, `quickEndConsonant`) can put letters in the
+    /// composed word that were never typed (f -> ph, k -> ch, cc -> ch), and
+    /// `choose` refuses those for the same reason (see its doc comment and
+    /// `isSubsequence`): a cancelled word that also carries such an expansion
+    /// keeps its raw keys.
+    ///
     /// `atCommit == true` (the word is being committed):
     ///   1. any raw is a word                      -> `.raw`
     ///   2. composed is a word                     -> `.composed`
@@ -248,6 +257,7 @@ public enum RestoreDecision {
     ) -> RestoreChoice {
         let composedLower = composed.lowercased()
         let rawsLower = raws.map { $0.lowercased() }
+        guard rawsLower.contains(where: { isSubsequence(composedLower, of: $0) }) else { return .raw }
         if atCommit {
             if rawsLower.contains(where: { lexicon.contains($0) }) { return .raw }
             if lexicon.contains(composedLower) { return .composed }

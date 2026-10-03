@@ -223,6 +223,22 @@ struct CancelKeepsLiteralUnchangedFromMainTests {
                 == ["t", "ta", "tá", "táo", "taố", "taóo"])
     }
 
+    // The index gate itself (not only "depth is 0 without an index"). The lexicon holds
+    // ONLY "arowweed", the composed spelling of `arrowweed` (rr cancels, then w w are
+    // literal). Main refuses it: the ww-collapsed raw `arroweed` has one w, so the composed
+    // word is not a subsequence of it. The new rule's guard is looser (it also tries the
+    // keys as typed, which do contain both w's), so with a BUILT index it would pick the
+    // composed word; with a stale index the gate must hand the decision back to main.
+    // Pinned from main.
+    @Test func row12_unbuiltPrefixIndexDefersToMainsStricterChoice() {
+        var stale = Lexicon()
+        stale.insert("arowweed")
+        #expect(!stale.isPrefixIndexBuilt)
+        #expect(typeThroughEngine("arrowweed ", config: on, lexicon: stale) == "arroweed ")
+        // Contrast: the same word list, indexed, is decided by the new rule.
+        #expect(typeThroughEngine("arrowweed ", config: on, lexicon: Lexicon(["arowweed"])) == "arowweed ")
+    }
+
     // Row 13 — the cancel leaves a circumflex on `ê` (`viêt`), so the cancelled
     // literal does not apply. The lexicon holds "viêt" (NFC) so a missing
     // vowel-mark gate would show. Strings pinned from main.
@@ -234,12 +250,67 @@ struct CancelKeepsLiteralUnchangedFromMainTests {
     }
 }
 
+// MARK: - The subsequence guard, through the engine (quick consonants)
+
+@Suite("CancelKeepsLiteralQuickConsonants")
+struct CancelKeepsLiteralQuickConsonantsTests {
+    // A quick-consonant toggle can put letters in the composed word that the user never
+    // typed (f -> ph, k -> ch, cc -> ch). If such a word is also cancelled and the composed
+    // spelling happens to be listed, the cancel rule must NOT commit it: composed has to be
+    // obtainable from the raw keys by deleting characters only, the same refusal main's
+    // `choose` makes. Each lexicon lists exactly the expanded spelling, so without the guard
+    // both the mid-word display and the commit would pick it. Strings pinned from main.
+    private func config(start: Bool = false, end: Bool = false, quick: Bool = false) -> EngineConfig {
+        EngineConfig(inputMethod: .telex, restoreIfInvalid: true, quickTelex: quick,
+                     quickStartConsonant: start, quickEndConsonant: end, allowFreeToneMark: true,
+                     freeMarkAcrossCoda: true, literalAfterCancel: true, spellCheck: true)
+    }
+
+    @Test func quickStartConsonantExpansionIsNotCommittedOverTheRawKeys() {
+        // f -> ph at the start; ss cancels the sắc. Composed "phons".
+        let lex = Lexicon(["phons"])
+        let c = config(start: true)
+        #expect(typeThroughEngine("fonss ", config: c, lexicon: lex) == "fonss ")
+        #expect(typeStepwise("fonss", config: c, lexicon: lex) == ["ph", "pho", "phon", "phón", "fonss"])
+    }
+
+    @Test func quickEndConsonantExpansionIsNotCommittedOverTheRawKeys() {
+        // k after a vowel -> ch; ss cancels the sắc. Composed "achs".
+        let lex = Lexicon(["achs"])
+        let c = config(end: true)
+        #expect(typeThroughEngine("akss ", config: c, lexicon: lex) == "akss ")
+        #expect(typeStepwise("akss", config: c, lexicon: lex) == ["a", "ach", "ách", "akss"])
+    }
+
+    @Test func quickTelexExpansionIsNotCommittedOverTheRawKeys() {
+        // cc -> ch; ss cancels the sắc. Composed "chas".
+        let lex = Lexicon(["chas"])
+        let c = config(quick: true)
+        #expect(typeThroughEngine("ccass ", config: c, lexicon: lex) == "ccass ")
+        #expect(typeStepwise("ccass", config: c, lexicon: lex) == ["c", "ch", "cha", "chá", "ccass"])
+    }
+
+    @Test func theCancelRuleStillWorksWithAQuickToggleOnWhenNothingWasExpanded() {
+        // Same toggles on, but no key is expanded: the guard must let a normal cancel through.
+        let lex = Lexicon(["unsuspected"])
+        let c = config(start: true, end: true, quick: true)
+        #expect(typeThroughEngine("unssuspend ", config: c, lexicon: lex) == "unsuspend ")
+    }
+}
+
+
 // MARK: - RestoreDecision.chooseAfterCancel, pure
 
 @Suite("ChooseAfterCancel")
 struct ChooseAfterCancelTests {
     // One word, so every depth is easy to read off: "abcdefg".
     private let lex = Lexicon(["abcdefg"])
+
+    // Every composed/raw pair below satisfies the subsequence guard (composed is raw with some
+    // characters deleted, exactly what a cancel does), so the rule under test is the one named.
+    // A raw is built by inserting a stray letter X into the composed spelling: the earlier the
+    // X, the shallower the raw's depth. For composed "abcdexx" (depth 5):
+    //   "abcdXexx" -> depth 4 (difference 1), "abcXdexx" -> 3 (2), "abXcdexx" -> 2 (3).
 
     private func commit(_ composed: String, _ raws: [String], _ lexicon: Lexicon) -> RestoreChoice {
         RestoreDecision.chooseAfterCancel(composed: composed, raws: raws, lexicon: lexicon, atCommit: true)
@@ -258,28 +329,28 @@ struct ChooseAfterCancelTests {
         // Even when the composed form is a word too (contrived, but rule 1 is first).
         let l = Lexicon(["task", "tassk"])
         #expect(commit("task", ["tassk"], l) == .raw)
-        // ...and any of several candidates is enough.
-        #expect(commit("abcdefg", ["zzz", "tassk"], Lexicon(["abcdefg", "tassk"])) == .raw)
+        // ...and any of several candidates is enough (here the second one).
+        #expect(commit("abcdefg", ["abxcdefg", "tassk"], Lexicon(["abcdefg", "tassk"])) == .raw)
     }
 
     @Test func commitComposedInTheLexiconWins() {
-        #expect(commit("abcdefg", ["abcxxfg"], lex) == .composed)
+        #expect(commit("abcdefg", ["abcxdefg"], lex) == .composed)
     }
 
     @Test func commitMarginBoundaryDepthDifferenceOneIsRawTwoIsComposed() {
         // composed "abcdexx": depth 5 ("abcde"), not a word.
-        // raw "abcdxxx": depth 4 -> difference 1 -> raw.
-        #expect(commit("abcdexx", ["abcdxxx"], lex) == .raw)
-        // raw "abcxxxx": depth 3 -> difference 2 -> composed.
-        #expect(commit("abcdexx", ["abcxxxx"], lex) == .composed)
+        // raw "abcdXexx": depth 4 -> difference 1 -> raw.
+        #expect(commit("abcdexx", ["abcdXexx"], lex) == .raw)
+        // raw "abcXdexx": depth 3 -> difference 2 -> composed.
+        #expect(commit("abcdexx", ["abcXdexx"], lex) == .composed)
         // difference 3 -> composed.
-        #expect(commit("abcdexx", ["abxxxxx"], lex) == .composed)
+        #expect(commit("abcdexx", ["abXcdexx"], lex) == .composed)
     }
 
     @Test func commitUsesTheDeepestRaw() {
-        // Two raw spellings (collapsed, as typed): depth 4 and 3 -> max 4.
-        #expect(commit("abcdexx", ["abcxxxx", "abcdxxx"], lex) == .raw)
-        #expect(commit("abcdexx", ["abcxxxx", "abxxxxx"], lex) == .composed)
+        // Two raw spellings (collapsed, as typed): depth 3 and 4 -> max 4.
+        #expect(commit("abcdexx", ["abcXdexx", "abcdXexx"], lex) == .raw)
+        #expect(commit("abcdexx", ["abcXdexx", "abXcdexx"], lex) == .composed)
     }
 
     @Test func commitOtherwiseRaw() {
@@ -290,16 +361,17 @@ struct ChooseAfterCancelTests {
     }
 
     @Test func commitComparesLowercased() {
-        #expect(commit("ABCDEFG", ["ABCXXFG"], lex) == .composed)
-        #expect(commit("ABCDEXX", ["ABCXXXX"], lex) == .composed)
-        #expect(commit("abcdexx", ["ABCDEFG"], lex) == .raw)   // raw is a word, however it is cased
+        #expect(commit("ABCDEFG", ["ABCXDEFG"], lex) == .composed)
+        #expect(commit("ABCDEXX", ["ABCXDEXX"], lex) == .composed)
+        // A raw that is a word wins however it is cased ("abcdfg" is a subsequence of it).
+        #expect(commit("abcdfg", ["ABCDEFG"], lex) == .raw)
     }
 
     @Test func commitWithAnUnbuiltIndexNeverPrefersComposedByDepth() {
         var stale = Lexicon()
         stale.insert("abcdefg")
         // Depth is 0 on both sides: 0 >= 0 + 2 is false -> raw.
-        #expect(commit("abcdexx", ["abcxxxx"], stale) == .raw)
+        #expect(commit("abcdexx", ["abcXdexx"], stale) == .raw)
     }
 
     // MARK: atCommit == false (mid-word display)
@@ -315,8 +387,8 @@ struct ChooseAfterCancelTests {
     }
 
     @Test func midWordMarginBoundary() {
-        #expect(midWord("abcdexx", ["abcdxxx"], lex) == .raw)        // 5 vs 4
-        #expect(midWord("abcdexx", ["abcxxxx"], lex) == .composed)   // 5 vs 3
+        #expect(midWord("abcdexx", ["abcdXexx"], lex) == .raw)        // 5 vs 4
+        #expect(midWord("abcdexx", ["abcXdexx"], lex) == .composed)   // 5 vs 3
     }
 
     @Test func midWordOtherwiseRaw() {
@@ -335,5 +407,48 @@ struct ChooseAfterCancelTests {
         var stale = Lexicon()
         stale.insert("abcdefg")
         #expect(midWord("abc", ["abcc"], stale) == .raw)
+    }
+
+    // MARK: the subsequence guard
+    //
+    // Composed must be obtainable from at least one raw by DELETING characters only (what a
+    // cancel does). A quick-consonant toggle can instead ADD letters the user never typed
+    // (f -> ph, k -> ch, cc -> ch, j -> gi, w -> qu), and main's `choose` refuses those for the
+    // same reason. The guard comes first, before every other rule, in both modes.
+
+    @Test func guardRefusesAComposedFormThatAddsLettersEvenWhenItIsAWord() {
+        #expect(commit("niche", ["nike"], Lexicon(["niche"])) == .raw)       // rule 2 would say composed
+        #expect(commit("phone", ["fone"], Lexicon(["phone"])) == .raw)
+        #expect(commit("quilted", ["wilted"], Lexicon(["quilted"])) == .raw)
+    }
+
+    @Test func guardRefusesAComposedFormThatAddsLettersMidWord() {
+        // Composed is a dictionary prefix and raw is not, so the mid-word rule 2 would say composed.
+        #expect(midWord("phon", ["fonn"], Lexicon(["phone"])) == .raw)
+        #expect(midWord("ach", ["ak"], Lexicon(["achs"])) == .raw)
+    }
+
+    @Test func guardAlsoBlocksTheDepthMarginRule() {
+        // "abcdexx" has depth 5 and "xxxxxxx" has depth 0, a difference of 5, but composed
+        // is not a deletion of raw.
+        #expect(commit("abcdexx", ["xxxxxxx"], lex) == .raw)
+        #expect(midWord("abcdexx", ["xxxxxxx"], lex) == .raw)
+    }
+
+    @Test func guardIsSatisfiedByAnyOneRaw() {
+        // Not a deletion of the first raw, but of the second (as typed).
+        #expect(commit("task", ["zzzz", "tassk"], Lexicon(["task"])) == .composed)
+        #expect(midWord("tas", ["zzzz", "tass"], Lexicon(["task"])) == .composed)
+    }
+
+    @Test func guardComparesLowercased() {
+        #expect(commit("TASK", ["TASSK"], Lexicon(["task"])) == .composed)
+        #expect(commit("Niche", ["NIKE"], Lexicon(["niche"])) == .raw)
+    }
+
+    @Test func guardAcceptsTheRawItselfAndTheEmptyComposed() {
+        // identical strings are a (trivial) deletion; raw wins by the other rules there anyway
+        #expect(commit("abcdefg", ["abcdefg"], lex) == .raw)    // raw is a word -> raw
+        #expect(commit("", ["x"], lex) == .raw)                 // nothing English-like
     }
 }
