@@ -1697,6 +1697,12 @@ in the lexicon" — that claim is false (see "Known limitation" below); it is
 conditions above aren't ALL met, that keeps things safe regardless of what
 is or isn't in the lexicon.
 
+**Exception, added later.** A Telex word whose tone was cancelled and that has no
+tone or vowel mark left is decided by `RestoreDecision.chooseAfterCancel`
+instead of `choose` (dictionary-prefix English-likeness, so `unssuspend` commits
+`unsuspend` although `unsuspend` is unlisted) — see "Cancel keeps the literal:
+English-likeness by dictionary prefixes" below.
+
 **Dormant-at-engine / enabled-by-app, the same pattern as
 `freeMarkAcrossCoda`.** `Engine.lexicon: Lexicon?` defaults `nil` — with no
 lexicon installed, `RestoreDecision.choose` always returns `.raw`, so every
@@ -2031,8 +2037,10 @@ semantics" above; OpenKey's own `removeMark()`, the `z` handler, never
 touches `tempDisableKey` either), so typing `z` never enters literal mode.
 
 **How it composes with the lexicon restore.** `literalAfterCancel` only
-changes what gets COMPOSED; `RestoreDecision` (see above) is unchanged and
-still runs afterward. For a word like `classs`, the flag alone (even with
+changes what gets COMPOSED; `RestoreDecision` (see above) still runs afterward
+(for a cancelled word with no tone or vowel mark left, `chooseAfterCancel`
+replaces `choose` — see "Cancel keeps the literal: English-likeness by
+dictionary prefixes" below). For a word like `classs`, the flag alone (even with
 `restoreIfInvalid` off and no lexicon) already composes the right spelling
 character-for-character, because every key after the cancel is now literal:
 `class` — nothing left to restore. For a word like `tassk`, the flag makes
@@ -2186,7 +2194,10 @@ boundary commit: once a word goes dead, it stays showing its raw keystrokes
 verbatim for the rest of that word (backspacing past the dead keystroke
 naturally un-restores it too, since `rerender` always re-folds the whole of
 `rawKeys` from scratch — no separate state to unwind, same as
-`literalAfterCancel`'s `cancelled` local).
+`literalAfterCancel`'s `cancelled` local). One exception, added later: right
+after a Telex cancel the composed spelling can be shown instead when it is
+clearly the more English-like one (`uns`, not `unss`) — see "Cancel keeps the
+literal: English-likeness by dictionary prefixes" below.
 
 **The safety guarantee, and how it's proven.** The hard requirement: with
 `spellCheck` on, every REAL Vietnamese word renders byte-identical —
@@ -2421,3 +2432,124 @@ per-app code, not by the tap callback. The pure decision logic is the testable
 `SecureInputTracker` in `KeystoneInput` (`SecureInputTrackerTests`); `AppModel`
 is only the thin sampler. `SystemState.secureInputActive` in `Contracts.swift`
 stays as pre-existing, unused scaffolding: it was deliberately not touched.
+
+## Cancel keeps the literal: English-likeness by dictionary prefixes
+
+**Bug (reported again 2026-10-02/03 on the installed 1.1.6: `unssuspend`,
+`unsspend`, `susspend`).** The author types English inside Vietnamese Telex
+with OpenKey habits. He sees a tone appear (`u n s` → `ún`) and presses the
+key again to cancel it. `literalAfterCancel` already composes the right
+literal (`uns`, then every later key literal), but `spellCheck`'s eager
+restore then calls that composition DEAD (coda `ns`) and shows the RAW keys,
+cancel key included (`unss…`), and at the boundary `RestoreDecision.choose`
+only rescues the composed word when it is IN the dictionary (`suspend` yes,
+`unsuspend` no), so `unssuspend` committed.
+
+**First attempt, reverted** (commits `340c614`, `d4cd7ea`, `0424246`, reverted
+in `ccee5a9`). After a cancel it kept the cancelled composition unless the raw
+spelling was itself a dictionary word. That broke correctly typed English the
+1934-Webster list lacks (`messages` → `mesages`, `processing` → `procesing`,
+`diff` → `dif`): about 1 word in 160 of real prose. Its gates (Telex only,
+`Composition.cancelled`, no tone and no vowel mark) were fine; its DECISION
+RULE was the problem, so this design keeps the gates and replaces the rule.
+
+**The rule.** Compare two spellings of the word and keep the more
+ENGLISH-LIKE one, with the dictionary asked about PREFIXES, not only whole
+words. "Depth" of a string is how many of its leading letters still begin SOME
+dictionary word (`Lexicon.prefixDepth`; `Lexicon.isPrefix` is one step of it).
+`RestoreDecision.chooseAfterCancel(composed:raws:lexicon:atCommit:)`, all
+strings lowercased, `raws` = the `ww`/`ddd`-collapsed raw word and the keys as
+typed (the deepest counts):
+
+- At commit (`atCommit: true`): (1) any raw is a word → raw; (2) composed is a
+  word → composed; (3) depth(composed) ≥ max depth(raw) + 2 → composed;
+  (4) otherwise raw.
+- While typing (`atCommit: false`, display only): the same with "is a prefix"
+  in place of "is a word" in (1) and (2), because the word may be unfinished.
+
+So the cancelled form wins only when it is a word, or when it stays
+English-like for at least 2 more letters than the raw spelling.
+`unssuspend` (lexicon has `unsuspected`): composed `unsuspend` depth 7, raw 3
+→ `unsuspend`. `messages`: raw depth 7 (`message` + `s`), composed `mesages`
+3 → `messages`.
+
+**Why margin 2.** Measured with a throwaway prototype on 159,287 words of real
+English (22 man pages + the repo's docs, 6,977 distinct words) against main
+`d0d3837`, "habit" = after each intended letter, if the screen shows a
+Vietnamese mark the writer did not intend, press the same key once more:
+
+| | main d0d3837 | margin 2 |
+|---|---|---|
+| natural typing, final output correct | 87.60% | 87.60% (0 words newly wrong) |
+| natural typing, on-screen before the space correct | 83.33% | 83.32% (6 rare words: troff, missed, presses, perrig, ...) |
+| OpenKey habit, final correct | 87.13% | 89.39% (0 newly wrong, 408 newly right) |
+| OpenKey habit, on-screen before the space correct | 71.10% | 87.51% |
+
+Two variants were measured and rejected. **Margin 1** broke 9 real words
+(`lesskey`, `onerror`, `nonbootable`, ...): a natural double whose composed
+form happens to keep matching the dictionary one letter longer (`onerror`:
+composed `oneror` depth 5 via `onerous`, raw depth 4). **-s/-ed/-es stem
+rules** (treat `thiss` as `this` + `s`) broke the habit case. The real
+implementation reproduces the prototype's numbers exactly.
+
+**Where it applies** (`Engine.cancelledLiteralApplies`, true iff ALL of):
+
+- `literalAfterCancel` is on and `Composition.cancelled` (a same-key double
+  strike fired in this word; `Telex.fold` and `VNI.fold` both set it).
+- The input method is NOT VNI. A VNI cancel key is a DIGIT and digits are
+  ordinary text (`win11`, `ubuntu22.04`); the rule would silently drop one.
+  Simple Telex folds through `Telex` and is covered. VNI is byte-identical to
+  main.
+- A lexicon with a BUILT prefix index is present. Without one there is no
+  evidence and the engine behaves exactly as main (see below).
+- `tone == .ngang` and every VOWEL cell has `mark == .none`. If the cancel
+  leaves a mark (`vieetss`: the sắc is cancelled but `ê` stays) the word is
+  still a Vietnamese attempt and the existing restore handles it. Consonant
+  cells (a `dStroke` đ) are ignored.
+
+It changes two places and nothing else: `rerender()`'s eager-restore branch
+shows `encode(comp)` instead of the raw keys when the mid-word choice is
+composed, and `finalize`'s restore branch asks `chooseAfterCancel` first (the
+force-English branch before it still wins, and every other word still goes
+through `RestoreDecision.choose` unchanged). Capitalization is applied to
+whichever spelling wins (`unssuspend ` at a sentence start → `Unsuspend `).
+
+**The prefix index and the tap thread.** `Lexicon` keeps a sorted array of its
+lowercase words (`isPrefix` and `prefixDepth` are lower-bound binary searches,
+no per-call allocation of the lexicon). Sorting ~236k words costs a fraction of
+a second, so it happens ONLY where the lexicon is already built off the main and
+tap threads: `LexiconLoader.load` calls `buildPrefixIndex()` once after its
+inserts (`init<S>` and `parse` build it for the small test and force-English
+lists). It is never sorted in `Engine` or `EngineController.setLexicon`, which
+run under the per-keystroke lock. `insert` of a new word marks the index stale;
+a stale or never-built index answers `false`/`0`, and the engine additionally
+requires `isPrefixIndexBuilt`, so an unindexed lexicon falls back to main's
+behavior byte for byte instead of preferring the composed form on thin
+evidence. `LexiconLoaderTests` pins that the loader builds it (a forgotten
+build would otherwise turn the feature off without any failure).
+
+**Verification.** Sweep of every all-lowercase-ASCII word of
+`/usr/share/dict/words` (210,773 words, typed through `Engine` with the real
+`LexiconLoader.load()` lexicon and the force-English list, config
+Telex + restoreIfInvalid + literalAfterCancel + spellCheck), compared with an
+engine built from `git archive d0d3837`: 0 differences in the committed output
+and 0 in the on-screen word before the space. The 14-row behavior table is pinned by `CancelKeepsLiteralTests.swift`
+(rows 11-13, the cases that must NOT change, hold strings measured on main
+before `Engine.swift` was touched), the pure prefix queries by
+`LexiconTests.swift`, the margin boundary (difference 1 → raw, 2 → composed) by
+`ChooseAfterCancelTests`.
+
+**Accepted trade-offs.**
+
+- Display and commit are decided separately, so a handful of rare natural words
+  flash the composed form before the space and are restored at it (the 6 words
+  above; `presses` shows `preses`, then `presses`). They commit correctly.
+- It is a measured heuristic, not a guarantee: 89.39% of habit-typed words come
+  out right, not 100%. A word whose composed form is accidentally 2+ letters
+  deeper in the dictionary than its raw one, and that the lexicon does not
+  list, would still lose the doubled letter. Escape hatch: turn `useLexicon` or
+  `literalAfterCancel` off.
+- `chooseAfterCancel` has no subsequence guard (unlike `choose`). With a
+  quick-consonant toggle on, a cancel plus a quick rewrite could in principle
+  land on an unrelated listed word; none of the measured configurations enables
+  them.

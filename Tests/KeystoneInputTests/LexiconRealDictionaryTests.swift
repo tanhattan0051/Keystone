@@ -27,6 +27,12 @@ struct LexiconRealDictionaryTests {
     // this keeps every test independent/order-agnostic.
     private var realLexicon: Lexicon { LexiconLoader.load() }
 
+    @Test func realLexiconHasItsPrefixIndexBuilt() {
+        let lexicon = realLexicon
+        #expect(lexicon.isPrefixIndexBuilt)
+        #expect(lexicon.isPrefix("suspen"))
+    }
+
     // MARK: - The nine-row cancel-habit table, against the real dictionary.
 
     @Test func tassk_wantsTask() {

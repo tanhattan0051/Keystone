@@ -22,6 +22,15 @@ import Foundation
 public struct Lexicon: Sendable {
     private var words: Set<String>
 
+    /// Every word, lowercase, sorted ascending — the data behind `isPrefix` and
+    /// `prefixDepth` (binary searches). Only meaningful while
+    /// `prefixIndexIsFresh`; see `buildPrefixIndex`.
+    private var sortedWords: [String] = []
+    /// False from construction (`init()`) and after any `insert` that added a
+    /// word, until `buildPrefixIndex()` runs. A stale index answers
+    /// `false`/`0` rather than something wrong.
+    private var prefixIndexIsFresh = false
+
     /// An empty lexicon, built up one word at a time via `insert` — the
     /// low-memory path `LexiconLoader` uses to build the real ~236k-entry
     /// list without ever materializing an intermediate `[String]` of every
@@ -38,6 +47,7 @@ public struct Lexicon: Sendable {
         self.init()
         self.words.reserveCapacity(words.underestimatedCount)
         for w in words { insert(w) }
+        buildPrefixIndex()
     }
 
     /// Inserts one word: trimmed of whitespace, lowercased; a blank/
@@ -50,7 +60,8 @@ public struct Lexicon: Sendable {
     public mutating func insert(_ word: String) {
         let trimmed = word.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !trimmed.isEmpty else { return }
-        words.insert(trimmed)
+        // Only a NEW word changes what the index must contain.
+        if words.insert(trimmed).inserted { prefixIndexIsFresh = false }
     }
 
     /// One word per line, built in one pass via `Foundation`'s
@@ -60,6 +71,7 @@ public struct Lexicon: Sendable {
     public static func parse(_ text: String) -> Lexicon {
         var lex = Lexicon()
         text.enumerateLines { line, _ in lex.insert(line) }
+        lex.buildPrefixIndex()
         return lex
     }
 
@@ -69,6 +81,74 @@ public struct Lexicon: Sendable {
     }
 
     public var count: Int { words.count }
+
+    // MARK: - Prefix index
+    //
+    // "How English-like is this spelling?" asked of a string that is not (yet)
+    // a word: how many of its leading letters still begin SOME dictionary
+    // word. Used by `RestoreDecision.chooseAfterCancel` to tell a cancelled
+    // Telex tone key (`unssuspend` -> `unsuspend`) from a natural double letter
+    // (`messages`), see DECISIONS.md "Cancel keeps the literal".
+
+    /// True once `buildPrefixIndex()` has run since the last `insert` that
+    /// added a word. `Engine` requires it before using the cancel rule, so a
+    /// lexicon that was never indexed behaves exactly as it did before this
+    /// feature existed.
+    public var isPrefixIndexBuilt: Bool { prefixIndexIsFresh }
+
+    /// Sorts every word into the prefix index. O(n log n) — for the real
+    /// ~236k-word list that is a noticeable fraction of a second — so it must
+    /// only ever run where the lexicon is built, off the event-tap thread
+    /// (`LexiconLoader.load` calls it once after its inserts; `init<S>` and
+    /// `parse` call it for the small lists tests and the force-English list
+    /// build). Never call it from `Engine` or the per-keystroke path.
+    public mutating func buildPrefixIndex() {
+        sortedWords = words.sorted()
+        prefixIndexIsFresh = true
+    }
+
+    /// True iff some word starts with the lowercased `p` (a word is a prefix of
+    /// itself). `false` on a stale or never-built index.
+    public func isPrefix(_ p: String) -> Bool {
+        guard prefixIndexIsFresh else { return false }
+        return startsSomeWord(p.lowercased(), searchingFrom: 0).found
+    }
+
+    /// The largest k such that the first k characters of lowercased `s` pass
+    /// `isPrefix`; 0 for "" and for a stale or never-built index.
+    ///
+    /// Prefixes are monotone — if a k-letter prefix of `s` starts no word, no
+    /// longer one does — so this scans forward and stops at the first miss,
+    /// resuming each binary search from where the previous one landed.
+    public func prefixDepth(_ s: String) -> Int {
+        guard prefixIndexIsFresh else { return 0 }
+        let lowered = s.lowercased()
+        var depth = 0
+        var lowerBound = 0
+        var end = lowered.startIndex
+        while end < lowered.endIndex {
+            end = lowered.index(after: end)
+            let result = startsSomeWord(String(lowered[..<end]), searchingFrom: lowerBound)
+            guard result.found else { break }
+            depth += 1
+            lowerBound = result.index
+        }
+        return depth
+    }
+
+    /// Binary search for the first sorted word >= `prefix` (starting at
+    /// `searchingFrom`, which the caller guarantees is <= that position), and
+    /// whether that word starts with `prefix`. Every word that starts with
+    /// `prefix` sorts at or after `prefix` and contiguously, so the first
+    /// candidate decides it.
+    private func startsSomeWord(_ prefix: String, searchingFrom start: Int) -> (found: Bool, index: Int) {
+        var lo = start, hi = sortedWords.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if sortedWords[mid] < prefix { lo = mid + 1 } else { hi = mid }
+        }
+        return (lo < sortedWords.count && sortedWords[lo].hasPrefix(prefix), lo)
+    }
 }
 
 /// Which spelling `RestoreDecision.choose` picked.
@@ -118,6 +198,65 @@ public enum RestoreDecision {
         guard lexicon.contains(composedLower), !lexicon.contains(rawLower) else { return .raw }
         guard isSubsequence(composedLower, of: rawLower) else { return .raw }
         return .composed
+    }
+
+    /// How many MORE letters the composed spelling must stay English-like than
+    /// the raw one before `chooseAfterCancel` prefers it ("English-like" =
+    /// `Lexicon.prefixDepth`).
+    ///
+    /// WHY 2. Measured on 159,287 words of real English prose (22 man pages +
+    /// the repo's docs, 6,977 distinct words), typed naturally and with the
+    /// OpenKey cancel habit, against main (no rule): natural typing final output
+    /// correct 87.60% -> 87.60% (0 words newly wrong) at margin 2, habit typing
+    /// 87.13% -> 89.39% (0 newly wrong, 408 newly right). Margin 1 broke 9
+    /// real words (`lesskey`, `onerror`, `nonbootable`, ...): a natural double
+    /// letter whose composed form happens to keep matching the dictionary one
+    /// letter longer. Adding -s/-ed/-es stem rules instead broke the habit case
+    /// (`thiss` read as `this` + `s`). Do not lower this without re-measuring.
+    static let englishLikenessMargin = 2
+
+    /// After a Telex CANCEL (`Composition.cancelled`, no tone and no vowel mark
+    /// left): which spelling is more ENGLISH-LIKE, the COMPOSED one (the cancel
+    /// applied: `unsuspend`) or the RAW keys (cancel key included:
+    /// `unssuspend`)? All strings are compared lowercased.
+    ///
+    /// Why this is not `choose`: `choose` needs the composed word to BE in the
+    /// dictionary, but the words the author types this way often are not
+    /// (`unsuspend`), and main then commits the cancel key (`unssuspend`). The
+    /// first attempt at fixing that (always keep the composed word unless the
+    /// raw one is a dictionary word) broke correctly typed English the
+    /// 1934-Webster list lacks (`messages` -> `mesages`): about 1 word in 160.
+    /// So the dictionary is asked about PREFIXES instead (`Lexicon.prefixDepth`):
+    ///
+    /// `atCommit == true` (the word is being committed):
+    ///   1. any raw is a word                      -> `.raw`
+    ///   2. composed is a word                     -> `.composed`
+    ///   3. depth(composed) >= max depth(raw) + `englishLikenessMargin`
+    ///                                             -> `.composed`
+    ///   4. otherwise                              -> `.raw`
+    ///
+    /// `atCommit == false` (the word is still being typed; this only decides
+    /// what to DISPLAY): the same, with "is a prefix" in place of "is a word" in
+    /// rules 1 and 2, because the word may simply not be finished yet.
+    ///
+    /// `raws` holds every spelling the raw keys could commit as (the
+    /// `ww`/`ddd`-collapsed one and the keys exactly as typed); the deepest
+    /// counts. A stale or never-built prefix index gives depth 0 on both
+    /// sides, so rule 3 can never fire without it.
+    public static func chooseAfterCancel(
+        composed: String, raws: [String], lexicon: Lexicon, atCommit: Bool
+    ) -> RestoreChoice {
+        let composedLower = composed.lowercased()
+        let rawsLower = raws.map { $0.lowercased() }
+        if atCommit {
+            if rawsLower.contains(where: { lexicon.contains($0) }) { return .raw }
+            if lexicon.contains(composedLower) { return .composed }
+        } else {
+            if rawsLower.contains(where: { lexicon.isPrefix($0) }) { return .raw }
+            if lexicon.isPrefix(composedLower) { return .composed }
+        }
+        let rawDepth = rawsLower.map { lexicon.prefixDepth($0) }.max() ?? 0
+        return lexicon.prefixDepth(composedLower) >= rawDepth + englishLikenessMargin ? .composed : .raw
     }
 
     /// True iff `needle` can be produced from `haystack` by deleting zero or

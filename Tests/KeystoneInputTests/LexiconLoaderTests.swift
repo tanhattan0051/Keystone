@@ -38,6 +38,37 @@ struct LexiconLoaderTests {
         #expect(lexicon.count == expectedCount)
     }
 
+    // MARK: - Prefix index
+    //
+    // The English-likeness choice after a Telex cancel (see DECISIONS.md
+    // "Cancel keeps the literal") reads `Lexicon.isPrefix`/`prefixDepth`, which
+    // answer `false`/`0` until `buildPrefixIndex()` ran. The loader is the one
+    // place that sorts the ~236k words (off the tap thread), so a load that
+    // forgot to build would silently turn the whole feature off: pin it.
+
+    @Test func loadedLexiconHasItsPrefixIndexBuilt() throws {
+        let dir = FileManager.default.temporaryDirectory
+        let path = dir.appendingPathComponent("lexicon-loader-prefix-\(UUID().uuidString).txt")
+        try "unsuspected\nsuspense\n".write(to: path, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: path) }
+
+        let lexicon = LexiconLoader.load(systemWordsPath: path.path)
+
+        #expect(lexicon.isPrefixIndexBuilt)
+        #expect(lexicon.isPrefix("suspen"))
+        #expect(lexicon.prefixDepth("unsuspend") == 7)
+        // Supplement words are indexed too, not only the file's own.
+        #expect(lexicon.isPrefix("goog"))
+    }
+
+    @Test func missingPathStillBuildsThePrefixIndexFromTheSupplement() {
+        let missing = "/nonexistent/path/\(UUID().uuidString)/words.txt"
+        let lexicon = LexiconLoader.load(systemWordsPath: missing)
+
+        #expect(lexicon.isPrefixIndexBuilt)
+        #expect(lexicon.isPrefix("goog"))
+    }
+
     @Test func supplementaryWordsAreAllLowercaseAndNonEmpty() {
         for w in SupplementaryWords.all {
             #expect(w == w.lowercased(), "\(w) must be lowercase")

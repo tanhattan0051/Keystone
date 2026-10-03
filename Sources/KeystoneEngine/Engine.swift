@@ -295,7 +295,16 @@ public final class Engine {
             // raw-rendering `finalize`'s revert-to-raw branch uses, so there
             // is no visual jump when the word boundary is eventually reached
             // (see DECISIONS.md "Eager restore (spellCheck / Phase 7)").
-            newUnits = Engine.collapseDoubledLiterals(rawKeys).flatMap { table.plain($0) }
+            //
+            // Except after a Telex cancel, when the composed spelling is
+            // clearly the more English-like one: the raw keys would bring back
+            // the cancel key the user just removed on purpose (`suss`, then
+            // `unssuspend`) — see `cancelledLiteralApplies`.
+            if cancelledLiteralApplies(comp), choiceAfterCancel(comp, atCommit: false) == .composed {
+                newUnits = encode(comp, table: table)
+            } else {
+                newUnits = Engine.collapseDoubledLiterals(rawKeys).flatMap { table.plain($0) }
+            }
         } else {
             newUnits = encode(comp, table: table)
         }
@@ -402,7 +411,19 @@ public final class Engine {
             // `RestoreDecision` picks the COMPOSED word instead when it is
             // the real one and the raw spelling isn't — see DECISIONS.md
             // "Restore chooses the composed word when it is the real one".
-            if RestoreDecision.choose(composed: composedWordU, raw: rawWord, lexicon: lexicon) == .composed {
+            //
+            // A word that was CANCELLED and has nothing left to restore (see
+            // `cancelledLiteralApplies`) is decided by dictionary-prefix
+            // English-likeness instead: the composed word wins when it is a
+            // word or clearly more English-like than the raw keys
+            // (`unssuspend` -> `unsuspend`), not only when it is itself listed.
+            let choice: RestoreChoice
+            if cancelledLiteralApplies(comp) {
+                choice = choiceAfterCancel(comp, atCommit: true)
+            } else {
+                choice = RestoreDecision.choose(composed: composedWordU, raw: rawWord, lexicon: lexicon)
+            }
+            if choice == .composed {
                 finalUnits = encode(capitalized(comp, if: shouldCapitalize), table: table)
             } else {
                 finalUnits = revertToRawUnits()
@@ -599,6 +620,41 @@ public final class Engine {
         guard Phonology.isLegalRime(nucleus: p.nucleusString, coda: p.codaString) else { return false }
         guard Phonology.toneAllowed(comp.tone, coda: p.codaString) else { return false }
         return true
+    }
+
+    /// Does the cancel rule (`RestoreDecision.chooseAfterCancel`) apply to this
+    /// composition? True iff ALL of:
+    ///   - `literalAfterCancel` is on and `comp.cancelled` says a cancel fired;
+    ///   - the input method is not VNI. A VNI cancel key is a DIGIT, and digits
+    ///     are ordinary text (`win11`, `ubuntu22.04`): a doubled digit there is
+    ///     data, not a cancel, and the rule would silently drop one. (A Telex
+    ///     cancel key is a letter, and the dictionary vets the doubles.) Simple
+    ///     Telex folds through `Telex`, so it is covered;
+    ///   - a lexicon with a BUILT prefix index is present. Without one the rule
+    ///     has no evidence, and the engine must behave exactly as before;
+    ///   - no tone survives and no vowel carries a quality mark. If the cancel
+    ///     left a mark (`vieetss` -> `viêt…`), the word is still a Vietnamese
+    ///     attempt and the existing restore handles it.
+    /// Consonant cells (including a `dStroke` đ) are ignored by the mark check.
+    private func cancelledLiteralApplies(_ comp: Composition) -> Bool {
+        guard config.literalAfterCancel, config.inputMethod != .vni,
+              let lexicon, lexicon.isPrefixIndexBuilt,
+              comp.cancelled, comp.tone == .ngang else { return false }
+        return !comp.cells.contains { $0.isVowel && $0.mark != .none }
+    }
+
+    /// The composed-vs-raw choice for a word `cancelledLiteralApplies` accepted.
+    /// Candidates: the composition rendered through the `.unicode` table (the
+    /// same stable comparison form `finalize` uses, before capitalization) vs
+    /// the raw keys, both with and without the `ww`/`ddd` collapse (see
+    /// `collapseDoubledLiterals`) since either may be the real spelling.
+    private func choiceAfterCancel(_ comp: Composition, atCommit: Bool) -> RestoreChoice {
+        guard let lexicon else { return .raw }
+        let unicodeTable = outputTable(for: .unicode)
+        let composed = unicodeTable.decode(encode(comp, table: unicodeTable))
+        let raws = [String(Engine.collapseDoubledLiterals(rawKeys)), String(rawKeys)]
+        return RestoreDecision.chooseAfterCancel(
+            composed: composed, raws: raws, lexicon: lexicon, atCommit: atCommit)
     }
 
     /// Eager restore (Phase 7, `config.spellCheck`): is this composition

@@ -85,6 +85,13 @@ Cùng với **self-tag** chống xử lý lại chính event mình sinh ra, **kh
   thường hoàn toàn — không còn lên dấu/thanh hay biến đổi gõ nhanh nữa — cho tới hết từ:
   `classs → class`, `tassk → task`. Công tắc riêng **"Huỷ dấu xong thì gõ tiếp chữ thường (như
   OpenKey)"** trong Bảng điều khiển; xem DECISIONS.md "OpenKey-compatible literal-after-cancel".
+  Khi từ điển đang bật (xem "Giữ từ tiếng Anh đang hiển thị" ở trên), một từ Telex vừa huỷ dấu còn
+  được chọn giữa dạng đã huỷ và dạng gõ thô theo độ giống tiếng Anh, so bằng tiền tố của từ điển:
+  dạng đã huỷ chỉ thắng khi nó là một từ, hoặc còn khớp từ điển dài hơn dạng thô ít nhất 2 chữ cái.
+  Nhờ vậy `unssuspend → unsuspend`, `unsspend → unspend`, `susspend → suspend` dù từ đó không có
+  trong từ điển, còn từ gõ đúng như `messages`, `processing`, `diff` vẫn giữ nguyên. VNI không bị
+  ảnh hưởng (phím huỷ là chữ số, như `win11`). Xem DECISIONS.md "Cancel keeps the literal:
+  English-likeness by dictionary prefixes".
 - **Kiểm tra chính tả** *(mặc định bật):* khi từ đang gõ trở thành một âm tiết tiếng Việt "chết" —
   không cách nào gõ tiếp để thành hợp lệ được nữa (vd phụ âm cuối `ck`, `vm`... không phải phụ âm đầu
   hay cuối tiếng Việt nào) — chữ thô sẽ hiện ra NGAY khi đang gõ thay vì đợi đến khi gõ dấu cách:

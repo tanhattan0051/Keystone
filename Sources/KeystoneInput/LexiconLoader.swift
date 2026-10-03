@@ -24,7 +24,8 @@ public enum LexiconLoader {
     /// `systemWords + supplement` array concatenation (both would double
     /// peak memory for a ~236k-line file for no benefit; `Lexicon.insert`
     /// is the one place, shared with `Lexicon.parse`, that defines what "a
-    /// word in the lexicon" means — see its doc comment).
+    /// word in the lexicon" means — see its doc comment). The sorted prefix
+    /// index is built once at the end (`Lexicon.buildPrefixIndex`).
     public static func load(systemWordsPath: String = "/usr/share/dict/words") -> Lexicon {
         var lexicon = Lexicon()
         do {
@@ -36,6 +37,11 @@ public enum LexiconLoader {
         }
         for w in SupplementaryWords.all { lexicon.insert(w) }
         for w in SupplementaryWords.protectedRealWords { lexicon.insert(w) }
+        // Sorted ONCE here, after every insert, because this already runs off
+        // the main and event-tap threads (see `AppModel.updateLexiconLoaded`).
+        // Without it `isPrefix`/`prefixDepth` answer false/0 and the engine's
+        // cancel rule stays off — LexiconLoaderTests pins that it is built.
+        lexicon.buildPrefixIndex()
         return lexicon
     }
 }
