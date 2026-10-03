@@ -300,7 +300,7 @@ public final class Engine {
             // clearly the more English-like one: the raw keys would bring back
             // the cancel key the user just removed on purpose (`suss`, then
             // `unssuspend`) — see `cancelledLiteralApplies`.
-            if cancelledLiteralApplies(comp), choiceAfterCancel(comp, atCommit: false) == .composed {
+            if cancelledLiteralApplies(comp), midWordChoiceAfterCancel(comp) == .composed {
                 newUnits = encode(comp, table: table)
             } else {
                 newUnits = Engine.collapseDoubledLiterals(rawKeys).flatMap { table.plain($0) }
@@ -418,8 +418,10 @@ public final class Engine {
             // word or clearly more English-like than the raw keys
             // (`unssuspend` -> `unsuspend`), not only when it is itself listed.
             let choice: RestoreChoice
-            if cancelledLiteralApplies(comp) {
-                choice = choiceAfterCancel(comp, atCommit: true)
+            if cancelledLiteralApplies(comp), let lexicon {
+                choice = RestoreDecision.chooseAfterCancel(
+                    composed: composedWordU, raws: [rawWord, String(rawKeys)],
+                    lexicon: lexicon, atCommit: true)
             } else {
                 choice = RestoreDecision.choose(composed: composedWordU, raw: rawWord, lexicon: lexicon)
             }
@@ -634,27 +636,75 @@ public final class Engine {
     ///     has no evidence, and the engine must behave exactly as before;
     ///   - no tone survives and no vowel carries a quality mark. If the cancel
     ///     left a mark (`vieetss` -> `viêt…`), the word is still a Vietnamese
-    ///     attempt and the existing restore handles it.
+    ///     attempt and the existing restore handles it;
+    ///   - exactly one key vanished (`RestoreDecision.cancelDeletedExactlyOneKey`)
+    ///     and the word does not mix letter case (`RestoreDecision.mixesLetterCase`):
+    ///     more than one lost key, or camelCase, means a natural word or an
+    ///     identifier, which keeps main's behavior (`boundsError`, `isString`).
     /// Consonant cells (including a `dStroke` đ) are ignored by the mark check.
     private func cancelledLiteralApplies(_ comp: Composition) -> Bool {
-        guard config.literalAfterCancel, config.inputMethod != .vni,
-              let lexicon, lexicon.isPrefixIndexBuilt,
-              comp.cancelled, comp.tone == .ngang else { return false }
-        return !comp.cells.contains { $0.isVowel && $0.mark != .none }
+        // `comp.cancelled` first: it is the cheapest test and the most selective,
+        // and this runs on every keystroke of a word the eager restore has killed.
+        guard comp.cancelled, comp.tone == .ngang,
+              config.literalAfterCancel, config.inputMethod != .vni,
+              let lexicon, lexicon.isPrefixIndexBuilt else { return false }
+        guard !comp.cells.contains(where: { $0.isVowel && $0.mark != .none }) else { return false }
+        guard !RestoreDecision.mixesLetterCase(rawKeys) else { return false }
+        return RestoreDecision.cancelDeletedExactlyOneKey(
+            typedCount: rawKeys.count,
+            collapsedTypedCount: Engine.collapseDoubledLiterals(rawKeys).count,
+            composedCount: comp.cells.count)
     }
 
-    /// The composed-vs-raw choice for a word `cancelledLiteralApplies` accepted.
-    /// Candidates: the composition rendered through the `.unicode` table (the
-    /// same stable comparison form `finalize` uses, before capitalization) vs
-    /// the raw keys, both with and without the `ww`/`ddd` collapse (see
-    /// `collapseDoubledLiterals`) since either may be the real spelling.
-    private func choiceAfterCancel(_ comp: Composition, atCommit: Bool) -> RestoreChoice {
-        guard let lexicon else { return .raw }
+    /// `comp` rendered through the `.unicode` table: the stable comparison form
+    /// `finalize` uses for the composed word, before capitalization.
+    private func composedText(of comp: Composition) -> String {
         let unicodeTable = outputTable(for: .unicode)
-        let composed = unicodeTable.decode(encode(comp, table: unicodeTable))
-        let raws = [String(Engine.collapseDoubledLiterals(rawKeys)), String(rawKeys)]
+        return unicodeTable.decode(encode(comp, table: unicodeTable))
+    }
+
+    /// Both spellings the raw `keys` could commit as: the `ww`/`ddd`-collapsed
+    /// one and the keys exactly as typed (see `collapseDoubledLiterals`); either
+    /// may be the real spelling. Equal strings (no `ww`/`ddd`) are evaluated once
+    /// by `RestoreDecision.chooseAfterCancel`.
+    private func rawSpellings(of keys: [Character]) -> [String] {
+        [String(Engine.collapseDoubledLiterals(keys)), String(keys)]
+    }
+
+    /// What the screen should show WHILE the word is still being typed, for a
+    /// word `cancelledLiteralApplies` accepted. A click or a Cmd/Ctrl/Option
+    /// chord resets the engine without committing, so this display can become
+    /// the final text. Hence: once the keystroke that fired the cancel was
+    /// itself displayed as the RAW keys, a later key may switch the screen to
+    /// the composed spelling only through the margin rule, never because the
+    /// composed spelling merely "is a prefix" (see `composedMayWinAsPrefix` on
+    /// `RestoreDecision.chooseAfterCancel`, which has the measurements).
+    private func midWordChoiceAfterCancel(_ comp: Composition) -> RestoreChoice {
+        guard let lexicon else { return .raw }
         return RestoreDecision.chooseAfterCancel(
-            composed: composed, raws: raws, lexicon: lexicon, atCommit: atCommit)
+            composed: composedText(of: comp), raws: rawSpellings(of: rawKeys),
+            lexicon: lexicon, atCommit: false,
+            composedMayWinAsPrefix: !cancelKeystrokeWasDisplayedRaw(lexicon))
+    }
+
+    /// Was the display right after the keystroke that FIRED the cancel the raw
+    /// keys? Re-derived from `rawKeys` alone (the fold is a left-to-right scan,
+    /// so a prefix folds to exactly what it did when it was the whole word), so
+    /// no engine state is added and Backspace over any key just works.
+    ///
+    /// `false` when that keystroke is the latest one: its own decision is the one
+    /// being made now. A cancel needs two keys, hence the scan starts at 2.
+    private func cancelKeystrokeWasDisplayedRaw(_ lexicon: Lexicon) -> Bool {
+        guard rawKeys.count > 2 else { return false }
+        for length in 2..<rawKeys.count {
+            let prefix = Array(rawKeys[..<length])
+            let prefixComp = interpret(prefix)
+            guard prefixComp.cancelled else { continue }
+            return RestoreDecision.chooseAfterCancel(
+                composed: composedText(of: prefixComp), raws: rawSpellings(of: prefix),
+                lexicon: lexicon, atCommit: false) == .raw
+        }
+        return false
     }
 
     /// Eager restore (Phase 7, `config.spellCheck`): is this composition

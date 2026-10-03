@@ -120,6 +120,14 @@ public struct Lexicon: Sendable {
     /// Prefixes are monotone — if a k-letter prefix of `s` starts no word, no
     /// longer one does — so this scans forward and stops at the first miss,
     /// resuming each binary search from where the previous one landed.
+    ///
+    /// `String(lowered[..<end])` makes a new String per step. That is left as is:
+    /// avoiding it means a different search over the stored words (a neighbor
+    /// lookup instead of per-prefix binary searches), a change to code the task
+    /// review fuzzed, for a cost that is already small. Measured in a debug build
+    /// on the real lexicon: 3.7 us per call for a 7-letter word, 12 us for 20
+    /// letters, 17 us for 28, linear in length, and it only runs on keystrokes
+    /// after a cancel.
     public func prefixDepth(_ s: String) -> Int {
         guard prefixIndexIsFresh else { return 0 }
         let lowered = s.lowercased()
@@ -250,23 +258,92 @@ public enum RestoreDecision {
     ///
     /// `raws` holds every spelling the raw keys could commit as (the
     /// `ww`/`ddd`-collapsed one and the keys exactly as typed); the deepest
-    /// counts. A stale or never-built prefix index gives depth 0 on both
-    /// sides, so rule 3 can never fire without it.
+    /// counts. Duplicates are evaluated once: without a `ww`/`ddd` the two
+    /// spellings are the same string, which is the common case. A stale or
+    /// never-built prefix index gives depth 0 on both sides, so rule 3 can
+    /// never fire without it.
+    ///
+    /// `composedMayWinAsPrefix` only matters mid-word. `false` removes rule 2
+    /// ("composed is a prefix"), leaving the margin rule as the only way for
+    /// the composed spelling to replace the raw one. The engine passes `false`
+    /// once the keystroke that fired the cancel was itself DISPLAYED as the raw
+    /// keys (`miss`): a click or a Cmd/Ctrl/Option chord resets the engine
+    /// without committing, so whatever the last keystroke showed stays on
+    /// screen as final text, and a natural `missed` must not flip to `mised`
+    /// merely because "mise" happens to begin some word later on. Measured on
+    /// 99,659 distinct out-of-corpus tokens (46.6M words of code and man pages),
+    /// that cuts the words that flash wrong but commit right from 243 to 97
+    /// tokens (4,912 to 2,042 occurrences). The cost: a habit word shows its
+    /// cancel key a little longer (`classs` shows `classs` until the space;
+    /// habit typing, on-screen before the space, 87.51% -> 83.40% on the
+    /// 6,977-word corpus, main 71.10%). Commit-time results are unchanged. See
+    /// DECISIONS.md "Cancel keeps the literal".
     public static func chooseAfterCancel(
-        composed: String, raws: [String], lexicon: Lexicon, atCommit: Bool
+        composed: String, raws: [String], lexicon: Lexicon, atCommit: Bool,
+        composedMayWinAsPrefix: Bool = true
     ) -> RestoreChoice {
         let composedLower = composed.lowercased()
-        let rawsLower = raws.map { $0.lowercased() }
+        let rawsLower = distinctLowercased(raws)
         guard rawsLower.contains(where: { isSubsequence(composedLower, of: $0) }) else { return .raw }
         if atCommit {
             if rawsLower.contains(where: { lexicon.contains($0) }) { return .raw }
             if lexicon.contains(composedLower) { return .composed }
         } else {
             if rawsLower.contains(where: { lexicon.isPrefix($0) }) { return .raw }
-            if lexicon.isPrefix(composedLower) { return .composed }
+            if composedMayWinAsPrefix, lexicon.isPrefix(composedLower) { return .composed }
         }
         let rawDepth = rawsLower.map { lexicon.prefixDepth($0) }.max() ?? 0
         return lexicon.prefixDepth(composedLower) >= rawDepth + englishLikenessMargin ? .composed : .raw
+    }
+
+    /// The lowercased `raws` with repeats removed, order kept.
+    private static func distinctLowercased(_ raws: [String]) -> [String] {
+        var out: [String] = []
+        for raw in raws {
+            let lower = raw.lowercased()
+            if !out.contains(lower) { out.append(lower) }
+        }
+        return out
+    }
+
+    /// Guard G1 of the cancel rule: did the cancel delete EXACTLY ONE key?
+    /// `typedCount` is the number of keys typed, `collapsedTypedCount` the same
+    /// after the `ww`/`ddd` collapse (a `ww` escape is a second, deliberate
+    /// deletion), `composedCount` the number of cells left.
+    ///
+    /// WHY. In the OpenKey habit the writer types the intended letters plus ONE
+    /// extra key, the one that cancels the tone they did not want, so raw is
+    /// composed + 1 key. A larger gap means an EARLIER tone key was swallowed
+    /// as well, often invisibly because eager restore was showing the raw keys
+    /// (`boundsError`: the first `s` is a tone key, `rr` cancels the second,
+    /// and the composed `boundEror` is two letters short). That is a natural
+    /// word, not a habit cancel, and committing the composed form would drop
+    /// several letters at once (`addSuccess` -> `adducces`). Requiring exactly
+    /// one key moves no habit word on the 6,977-word corpus and, on the 99,659
+    /// out-of-corpus tokens, takes the natural words newly wrong at commit from
+    /// 304 to 200 alone (58 with the case guard); see DECISIONS.md.
+    public static func cancelDeletedExactlyOneKey(
+        typedCount: Int, collapsedTypedCount: Int, composedCount: Int
+    ) -> Bool {
+        typedCount - composedCount == 1 || collapsedTypedCount - composedCount == 1
+    }
+
+    /// Guard G2M of the cancel rule: does the word MIX letter case, i.e. contain
+    /// a lowercase letter AND an uppercase letter after the first key?
+    ///
+    /// WHY. camelCase and PascalCase identifiers (`isString`, `OSString`,
+    /// `ErrRange`, `sysStat`) and names like `McDonald` put a capital where a
+    /// double letter forms across a word boundary (`is|String`: the tone key
+    /// from `is` is cancelled by the capital S), and the dictionary knows
+    /// nothing about them. The OpenKey habit writes ordinary lowercase words,
+    /// Capitalized words and ALL-CAPS words, none of which mix case, so they
+    /// keep the rule. No habit word on the 6,977-word corpus moves and, on the
+    /// 99,659 out-of-corpus tokens, the natural words newly wrong at commit go
+    /// from 304 to 76 alone (58 with the one-key guard); see DECISIONS.md.
+    public static func mixesLetterCase(_ keys: [Character]) -> Bool {
+        let hasLowercase = keys.contains { $0.isLowercase }
+        let hasLaterUppercase = keys.dropFirst().contains { $0.isUppercase }
+        return hasLowercase && hasLaterUppercase
     }
 
     /// True iff `needle` can be produced from `haystack` by deleting zero or

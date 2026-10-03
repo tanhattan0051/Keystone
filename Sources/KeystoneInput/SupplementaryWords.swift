@@ -207,6 +207,13 @@ public enum SupplementaryWords {
         "transsonic", "hassidic", "hassidim", "chassidim", "mycorrhiza", "degass",
         "unbiassed", "aaa", "iss", "poisson", "cassava", "cassaba", "hassan",
         "parramatta", "oss", "herr", "kerr", "orr", "starr", "barr", "neff", "foxx", "maxx",
+        // Added with the cancel rule (`RestoreDecision.chooseAfterCancel`), found by the final
+        // review's falsification run. Here the trouble is not a coincidentally-real composed
+        // word but the rule's dictionary-prefix depth: the composed form (`systat`, `sasines`)
+        // stays English-like two letters longer than the raw one, so the rule would drop the
+        // doubled letter. `sysstat` is the sysadmin tool, `sassiness` a plain English word, and
+        // `misscanned`/`misscanning` the common inflections of a word that is itself listed.
+        "sysstat", "sassiness", "misscanned", "misscanning",
     ]
 
     /// Force-English whitelist (Lớp B): English words whose Telex keystrokes ALSO

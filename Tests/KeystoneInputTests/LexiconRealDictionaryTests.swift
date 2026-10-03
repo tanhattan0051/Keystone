@@ -86,6 +86,40 @@ struct LexiconRealDictionaryTests {
         #expect(typeAndFlush(w, lexicon: realLexicon) == w, "natural typing of \(w)")
     }
 
+    // MARK: - Natural identifiers and names, with the cancel rule ON.
+    //
+    // The rule is only live with `literalAfterCancel` (every test above uses the default
+    // config, where it is off). These five were measured on main d0d3837 against this same
+    // lexicon: all commit exactly as typed, and the rule alone (without its two guards:
+    // exactly one key vanished, no mixed case) turned them into `boundEror`, `iString`,
+    // `adducces`, `OString` and `Monterat`. Found by the final review on 46.6M tokens of code
+    // and man pages the acceptance corpus did not contain.
+    private static let cancelRuleOn = EngineConfig(
+        inputMethod: .telex, restoreIfInvalid: true, allowFreeToneMark: true,
+        freeMarkAcrossCoda: true, literalAfterCancel: true, spellCheck: true)
+
+    private static let identifiersAndNames: [String] = [
+        "boundsError", "isString", "addSuccess", "OSString", "Montserrat",
+    ]
+
+    @Test(arguments: identifiersAndNames)
+    func identifierOrNameCommitsAsTypedWithTheCancelRuleOn(_ w: String) {
+        #expect(typeAndFlush(w, config: Self.cancelRuleOn, lexicon: realLexicon) == w,
+                "natural typing of \(w)")
+    }
+
+    // Real words the 1934 list lacks, whose natural typing the depth rule misread. They are in
+    // `SupplementaryWords.protectedRealWords` now, so rule 1 (a raw that is a word) keeps them.
+    private static let protectedByTheCancelRule: [String] = [
+        "sysstat", "sassiness", "misscanned", "misscanning",
+    ]
+
+    @Test(arguments: protectedByTheCancelRule)
+    func protectedRealWordCommitsAsTypedWithTheCancelRuleOn(_ w: String) {
+        #expect(typeAndFlush(w, config: Self.cancelRuleOn, lexicon: realLexicon) == w,
+                "natural typing of \(w)")
+    }
+
     // MARK: - Quick-consonant words commit raw with the relevant toggle, even
     // against the real (much bigger) dictionary — the subsequence guard, not
     // dictionary luck, is what protects these.

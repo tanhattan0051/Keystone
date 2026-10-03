@@ -103,12 +103,20 @@ struct CancelKeepsLiteralTelexTests {
     // "class" is a word: natural "class" keeps the raw spelling (the raw keys
     // ARE the word), and "classs" (an extra cancel) gives the composed word
     // "class". "clasp" only has to be there so "clas" is a prefix.
+    //
+    // While typing "classs" the screen shows the extra s until the space: at the
+    // cancelling key the raw keys "class" are themselves the word, so the display
+    // chose RAW there, and a later key may switch to composed only by the margin
+    // rule (composed "class" is no deeper than raw "classs"). The commit still
+    // gives "class". This is the measured price of not flashing natural words
+    // like `missed` (see DECISIONS.md "Cancel keeps the literal").
     @Test func row6_classAndClassssBothCommitClass() {
         let lex = Lexicon(["class", "clasp"])
         #expect(typeThroughEngine("class ", config: on, lexicon: lex) == "class ")
         #expect(typeThroughEngine("classs ", config: on, lexicon: lex) == "class ")
         #expect(typeStepwise("class", config: on, lexicon: lex).last == "class")
-        #expect(typeStepwise("classs", config: on, lexicon: lex).last == "class")
+        #expect(typeStepwise("classs", config: on, lexicon: lex)
+                == ["c", "cl", "cla", "clas", "class", "classs"])
     }
 
     @Test func row7_messsageAndMessageBothCommitMessage() {
@@ -353,6 +361,13 @@ struct ChooseAfterCancelTests {
         #expect(commit("abcdexx", ["abcXdexx", "abXcdexx"], lex) == .composed)
     }
 
+    @Test func identicalRawSpellingsDecideLikeASingleOne() {
+        // With no `ww`/`ddd` the engine passes the same string twice; it is evaluated once.
+        #expect(commit("abcdexx", ["abcXdexx", "abcXdexx"], lex) == commit("abcdexx", ["abcXdexx"], lex))
+        #expect(commit("abcdexx", ["abcdXexx", "ABCDXEXX"], lex) == .raw)
+        #expect(midWord("abcdexx", ["abcXdexx", "abcXdexx"], lex) == .composed)
+    }
+
     @Test func commitOtherwiseRaw() {
         // Neither spelling is English-like at all.
         #expect(commit("xyz", ["xyzz"], lex) == .raw)
@@ -409,6 +424,48 @@ struct ChooseAfterCancelTests {
         #expect(midWord("abc", ["abcc"], stale) == .raw)
     }
 
+    // MARK: composedMayWinAsPrefix == false (mid-word, after the display chose RAW at the cancel key)
+    //
+    // The engine passes false when the cancel keystroke itself was displayed as the raw keys
+    // (`miss`): the composed spelling may then replace them only on the margin rule, never
+    // because it merely "is a prefix" (rule 2). Rule 1 and the subsequence guard are untouched.
+
+    private func midWordNoPrefixFlip(_ composed: String, _ raws: [String], _ lexicon: Lexicon) -> RestoreChoice {
+        RestoreDecision.chooseAfterCancel(
+            composed: composed, raws: raws, lexicon: lexicon, atCommit: false, composedMayWinAsPrefix: false)
+    }
+
+    @Test func noPrefixFlipKeepsRawWhereComposedIsOnlyAPrefix() {
+        // Composed "abc" is a prefix and raw "abcc" is not: rule 2 says composed ...
+        #expect(midWord("abc", ["abcc"], lex) == .composed)
+        // ... unless the flip is switched off. Depth 3 vs 3 is no margin.
+        #expect(midWordNoPrefixFlip("abc", ["abcc"], lex) == .raw)
+    }
+
+    @Test func noPrefixFlipStillSwitchesByTheMargin() {
+        #expect(midWordNoPrefixFlip("abcdexx", ["abcdXexx"], lex) == .raw)        // 5 vs 4
+        #expect(midWordNoPrefixFlip("abcdexx", ["abcXdexx"], lex) == .composed)   // 5 vs 3
+    }
+
+    @Test func noPrefixFlipStillLetsARawPrefixWin() {
+        #expect(midWordNoPrefixFlip("abc", ["abcd"], lex) == .raw)
+    }
+
+    @Test func noPrefixFlipStillRefusesAComposedFormThatAddsLetters() {
+        // Margin 5 on depth alone, but composed is not a deletion of raw.
+        #expect(midWordNoPrefixFlip("abcdexx", ["xxxxxxx"], lex) == .raw)
+    }
+
+    @Test func prefixFlipSwitchDoesNotTouchTheCommitDecision() {
+        // composed is a word -> composed, with the switch either way.
+        #expect(RestoreDecision.chooseAfterCancel(
+            composed: "abcdefg", raws: ["abcxdefg"], lexicon: lex, atCommit: true,
+            composedMayWinAsPrefix: false) == .composed)
+        #expect(RestoreDecision.chooseAfterCancel(
+            composed: "abc", raws: ["abcc"], lexicon: lex, atCommit: true,
+            composedMayWinAsPrefix: false) == .raw)
+    }
+
     // MARK: the subsequence guard
     //
     // Composed must be obtainable from at least one raw by DELETING characters only (what a
@@ -445,10 +502,196 @@ struct ChooseAfterCancelTests {
         #expect(commit("TASK", ["TASSK"], Lexicon(["task"])) == .composed)
         #expect(commit("Niche", ["NIKE"], Lexicon(["niche"])) == .raw)
     }
+}
 
-    @Test func guardAcceptsTheRawItselfAndTheEmptyComposed() {
-        // identical strings are a (trivial) deletion; raw wins by the other rules there anyway
-        #expect(commit("abcdefg", ["abcdefg"], lex) == .raw)    // raw is a word -> raw
-        #expect(commit("", ["x"], lex) == .raw)                 // nothing English-like
+
+// MARK: - The two guards that keep a natural word out of the cancel rule, pure
+
+@Suite("CancelGuards")
+struct CancelGuardsTests {
+    // G1: a habit cancel deletes EXACTLY ONE key (raw = intended + 1).
+    @Test func exactlyOneVanishedKeyPasses() {
+        // unssuspend -> unsuspend: 10 keys typed, 9 letters left.
+        #expect(RestoreDecision.cancelDeletedExactlyOneKey(typedCount: 10, collapsedTypedCount: 10, composedCount: 9))
+    }
+
+    @Test func moreThanOneVanishedKeyFails() {
+        // boundsError -> boundEror: 11 typed, 9 left. An earlier tone key was swallowed too.
+        #expect(!RestoreDecision.cancelDeletedExactlyOneKey(typedCount: 11, collapsedTypedCount: 11, composedCount: 9))
+        #expect(!RestoreDecision.cancelDeletedExactlyOneKey(typedCount: 12, collapsedTypedCount: 12, composedCount: 9))
+    }
+
+    @Test func nothingVanishedFails() {
+        #expect(!RestoreDecision.cancelDeletedExactlyOneKey(typedCount: 9, collapsedTypedCount: 9, composedCount: 9))
+    }
+
+    @Test func aWwEscapeCountsOnceIfTheCollapsedKeysFit() {
+        // 10 typed, 9 after the ww -> w collapse, 8 composed. Raw alone says two vanished, the
+        // collapsed keys say one: the second reading is enough.
+        #expect(RestoreDecision.cancelDeletedExactlyOneKey(typedCount: 10, collapsedTypedCount: 9, composedCount: 8))
+        // Neither reading is exactly one.
+        #expect(!RestoreDecision.cancelDeletedExactlyOneKey(typedCount: 11, collapsedTypedCount: 10, composedCount: 8))
+    }
+
+    // G2M: a word that mixes lowercase with an uppercase letter after the first key is an
+    // identifier or a name, never an OpenKey-habit word.
+    @Test func plainCapitalizedAndAllCapsWordsDoNotMixCase() {
+        #expect(!RestoreDecision.mixesLetterCase(Array("unssuspend")))
+        #expect(!RestoreDecision.mixesLetterCase(Array("Unssuspend")))
+        #expect(!RestoreDecision.mixesLetterCase(Array("UNSSUSPEND")))
+        #expect(!RestoreDecision.mixesLetterCase(Array("A")))
+        #expect(!RestoreDecision.mixesLetterCase([]))
+    }
+
+    @Test func aLaterUppercaseLetterNextToLowercaseMixesCase() {
+        #expect(RestoreDecision.mixesLetterCase(Array("isString")))
+        #expect(RestoreDecision.mixesLetterCase(Array("OSString")))
+        #expect(RestoreDecision.mixesLetterCase(Array("boundsError")))
+        #expect(RestoreDecision.mixesLetterCase(Array("McDonald")))
+        #expect(RestoreDecision.mixesLetterCase(Array("iPhone")))
+        #expect(RestoreDecision.mixesLetterCase(Array("aB")))
+    }
+
+    @Test func onlyTheFirstKeyMayBeUppercaseWithoutMixing() {
+        // Capital first, rest lowercase: Capitalized. Capital first, rest lowercase after a later
+        // capital: mixed.
+        #expect(!RestoreDecision.mixesLetterCase(Array("Ab")))
+        #expect(RestoreDecision.mixesLetterCase(Array("ABc")))
+    }
+
+    @Test func keysThatAreNotLettersDoNotCountAsCase() {
+        #expect(!RestoreDecision.mixesLetterCase(Array("ab12")))
+        #expect(!RestoreDecision.mixesLetterCase(Array("[]")))
+        #expect(!RestoreDecision.mixesLetterCase(Array("a[b")))
+    }
+}
+
+// MARK: - Natural identifiers and names keep their letters, through the engine
+//
+// The depth rule alone misreads these. Each lexicon below holds ONE word that has the
+// COMPOSED spelling (the spelling after the cancel) as a proper prefix, so the composed form
+// is deeper than the raw one by more than the margin and the rule alone would commit it.
+// Main only prefers a composed form that IS a listed word, so it keeps the raw keys. Every
+// expected string below was measured on main d0d3837 (a `git archive` copy outside the repo).
+
+@Suite("CancelKeepsLiteralNaturalTypingStaysAsTyped")
+struct CancelKeepsLiteralNaturalTypingTests {
+    private func commitsAsTyped(_ word: String, lexicon words: [String]) -> Bool {
+        typeThroughEngine(word + " ", config: on, lexicon: Lexicon(words)) == word + " "
+    }
+    private func displaysAsTyped(_ word: String, lexicon words: [String]) -> Bool {
+        typeStepwise(word, config: on, lexicon: Lexicon(words)).last == word
+    }
+
+    // `boundsError`: the first `s` becomes a tone key that is swallowed, then `rr` cancels the
+    // second tone. TWO letters vanish (`boundEror`): both guards reject it.
+    @Test func boundsErrorKeepsEveryLetter() {
+        let lex = ["bounderors"]
+        #expect(commitsAsTyped("boundsError", lexicon: lex))
+        #expect(displaysAsTyped("boundsError", lexicon: lex))
+    }
+
+    // `addSuccess`: `S` is swallowed as a tone key and a later `ss` cancels it: two letters
+    // vanish (`adducces`) and the case is mixed.
+    @Test func addSuccessKeepsEveryLetter() {
+        let lex = ["adduccesx"]
+        #expect(commitsAsTyped("addSuccess", lexicon: lex))
+        #expect(displaysAsTyped("addSuccess", lexicon: lex))
+    }
+
+    // `isString`: the capital `S` cancels the sắc that `is` produced, so exactly ONE key
+    // vanishes (`iString`). Only the mixed-case guard (G2M) can reject this one.
+    @Test func isStringIsRejectedByTheMixedCaseGuardAlone() {
+        let lex = ["istrings"]
+        #expect(commitsAsTyped("isString", lexicon: lex))
+        #expect(displaysAsTyped("isString", lexicon: lex))
+    }
+
+    // `OSString`: same shape, one key vanishes (`OString`), mixed case.
+    @Test func osStringIsRejectedByTheMixedCaseGuardAlone() {
+        let lex = ["ostrings"]
+        #expect(commitsAsTyped("OSString", lexicon: lex))
+        #expect(displaysAsTyped("OSString", lexicon: lex))
+    }
+
+    // `Montserrat`: a plain Capitalized word, so the case guard lets it through. The `s` tone
+    // is swallowed, then `rr` cancels: TWO letters vanish (`Monterat`). Only the
+    // exactly-one-key guard (G1) can reject this one; the lowercase form too.
+    @Test func montserratIsRejectedByTheExactlyOneKeyGuardAlone() {
+        let lex = ["monterats"]
+        #expect(commitsAsTyped("Montserrat", lexicon: lex))
+        #expect(displaysAsTyped("Montserrat", lexicon: lex))
+        #expect(commitsAsTyped("montserrat", lexicon: lex))
+        #expect(displaysAsTyped("montserrat", lexicon: lex))
+    }
+
+    // The guards must not switch the feature off: a Capitalized or ALL-CAPS habit word (one
+    // key vanished, no mixed case) still gets the rule.
+    @Test func capitalizedAndAllCapsHabitWordsStillGetTheRule() {
+        let lex = ["unsuspected"]
+        #expect(typeThroughEngine("Unssuspend ", config: on, lexicon: Lexicon(lex)) == "Unsuspend ")
+        #expect(typeThroughEngine("UNSSUSPEND ", config: on, lexicon: Lexicon(lex)) == "UNSUSPEND ")
+    }
+}
+
+// MARK: - What the screen shows while the word is still being typed
+
+@Suite("CancelKeepsLiteralMidWordDisplay")
+struct CancelKeepsLiteralMidWordDisplayTests {
+    // A mouse click, a Cmd/Ctrl/Option chord or a focus change resets the engine WITHOUT
+    // committing, so whatever the last keystroke displayed stays on screen as final text. A
+    // word whose commit is right must therefore not flip to a wrong display on its way there.
+    //
+    // `missed` typed naturally: raw "miss" is a prefix of "missile", so the display keeps the
+    // raw keys at the cancel key. Later, composed "mised" becomes a prefix of "misedit" (depth
+    // 5 against raw depth 4: no margin), and the "composed is a prefix" rule alone would flip
+    // the screen to "mise" / "mised" even though the commit keeps "missed". Measured on main:
+    // `missed` is shown and committed as typed.
+    private let lex = Lexicon(["misedit", "missile"])
+
+    @Test func naturalMissedNeverFlashesTheCancelledSpelling() {
+        #expect(typeStepwise("missed", config: on, lexicon: lex)
+                == ["m", "mi", "mí", "miss", "misse", "missed"])
+        #expect(typeThroughEngine("missed ", config: on, lexicon: lex) == "missed ")
+    }
+
+    // The same lexicon without the cancel pair: the display is a pure function of the keys.
+    // Typing, backspacing over the cancel key and typing it again lands on the same screen.
+    @Test func backspacingOverTheCancelKeyAndRetypingGivesTheSameScreen() {
+        let engine = Engine(config: on)
+        engine.lexicon = lex
+        var acc: [Unicode.Scalar] = []
+        func apply(_ r: EngineResult) {
+            if r.backspaceCount > 0 { acc.removeLast(min(r.backspaceCount, acc.count)) }
+            acc.append(contentsOf: r.text.unicodeScalars)
+        }
+        for ch in "missed" { apply(engine.process(KeyInput(ch))) }
+        let direct = String(String.UnicodeScalarView(acc))
+        for _ in 0..<3 { apply(engine.process(.backspace)) }          // back to "mis" -> "mí"
+        #expect(String(String.UnicodeScalarView(acc)) == "mí")
+        for ch in "sed" { apply(engine.process(KeyInput(ch))) }
+        #expect(String(String.UnicodeScalarView(acc)) == direct)
+        #expect(direct == "missed")
+    }
+
+    // A raw display at the cancel key does not freeze the word: the composed spelling still
+    // wins once it is clearly more English-like (margin 2). `missexample`: "miss" stays (a
+    // prefix of "missile"), then composed "misexa" reaches depth 6 against raw depth 4.
+    @Test func aRawChoiceAtTheCancelKeyStillSwitchesByTheMargin() {
+        let l = Lexicon(["misexamples", "missile"])
+        #expect(typeStepwise("missexample", config: on, lexicon: l)
+                == ["m", "mi", "mí", "miss", "misse", "missex", "misexa", "misexam", "misexamp",
+                    "misexampl", "misexample"])
+        #expect(typeThroughEngine("missexample ", config: on, lexicon: l) == "misexample ")
+    }
+
+    // The other branch is today's behavior: when the cancel key itself was displayed as the
+    // COMPOSED spelling (`uns`, `tas`), later keys follow the prefix rule as before.
+    @Test func aComposedChoiceAtTheCancelKeyKeepsFollowingThePrefixRule() {
+        // "tas" is a prefix of "task", "tass" is not: composed at the cancel key.
+        let l = Lexicon(["task"])
+        #expect(typeStepwise("tassk", config: on, lexicon: l) == ["t", "ta", "tá", "tas", "task"])
+        let u = Lexicon(["unsuspected"])
+        #expect(typeStepwise("unssuspend", config: on, lexicon: u).allSatisfy { !$0.contains("unss") })
     }
 }

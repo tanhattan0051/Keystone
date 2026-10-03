@@ -111,6 +111,14 @@ struct LexiconLoaderTests {
         }
     }
 
+    // Added with the cancel rule (`RestoreDecision.chooseAfterCancel`): natural words it
+    // misread because the 1934 list lacks them (see DECISIONS.md "Cancel keeps the literal").
+    @Test func protectedRealWordsCoverTheWordsTheCancelRuleMisread() {
+        for w in ["sysstat", "sassiness", "misscanned", "misscanning"] {
+            #expect(SupplementaryWords.protectedRealWords.contains(w), "\(w) missing from protectedRealWords")
+        }
+    }
+
     @Test func protectedRealWordsAreLowercaseAndDeduplicated() {
         let words = SupplementaryWords.protectedRealWords
         #expect(Set(words).count == words.count)
