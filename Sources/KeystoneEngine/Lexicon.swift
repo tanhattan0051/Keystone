@@ -311,13 +311,15 @@ public enum RestoreDecision {
     /// committing, so the last mid-word display can become the final text (see
     /// `chooseAfterCancel`, `composedMayWinAsPrefix`). Once the cancel key was
     /// shown raw, a later key may switch to the composed spelling only through
-    /// the margin rule, EXCEPT when the raw spelling stopped being a dictionary
-    /// prefix at or before the cancel key's own position (`rawDepth <=
-    /// rawShownAtCancelOfLength`): then the prefix rule is back. That is the
-    /// habit-cancel signature, the raw spelling dies exactly at the doubled key
-    /// (`susspend` dies at `sussp`, `classs` at `classs`), whereas a natural word
-    /// dies later, at an inflection beyond the cancel (`missed` dies at `missed`,
-    /// `misse` still begins `missel`). `rawDepth` is the deepest of `raws`.
+    /// the margin rule, EXCEPT when the raw spelling is no longer a dictionary
+    /// prefix by the key right after the cancel, i.e. it dies at the cancel key
+    /// itself or on the very next key (`rawDepth <= rawShownAtCancelOfLength`):
+    /// then the prefix rule is back. That is the habit-cancel signature
+    /// (`susspend`: cancel at `suss`, dies at `sussp`; `classs`:
+    /// cancel at `class`, dies at `classs`), whereas a natural word dies later, at
+    /// an inflection two or more keys beyond the cancel (`missed`: cancel at
+    /// `miss`, `misse` still begins `missel`, dies only at `missed`). `rawDepth`
+    /// is the deepest of `raws`.
     public static func chooseMidWordAfterCancel(
         composed: String, raws: [String], lexicon: Lexicon, rawShownAtCancelOfLength: Int?
     ) -> RestoreChoice {

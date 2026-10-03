@@ -2664,14 +2664,16 @@ number of keys). If the mid-word choice AT that keystroke was COMPOSED (`unss` �
 `uns`, `tass` → `tas`), behavior is unchanged. If it was RAW, later keys may
 switch the display to the composed spelling only through the margin rule
 (composed depth ≥ max raw depth + 2), never because the composed spelling merely
-"is a prefix" (`composedMayWinAsPrefix: false`) — with one EARLY exception: when
-the deepest raw spelling has `prefixDepth <= cancelLength`, i.e. the raw
-spelling stopped being a dictionary prefix at or before the cancel key's own
-position, the prefix rule is back. Raw that dies exactly at the doubled key is
-the habit-cancel signature (`susspend` dies at `sussp`, `classs` at `classs`),
-whereas a natural word dies later, at an inflection beyond the cancel (`missed`
-dies at `missed`: `misse` still begins `missel`). The commit-time choice is
-unchanged.
+"is a prefix" (`composedMayWinAsPrefix: false`). This is the *sticky rule*: once
+the cancel keystroke was shown raw, the raw display sticks. It has one EARLY
+exception: when the deepest raw spelling has `prefixDepth <= cancelLength`, i.e.
+the raw spelling is no longer a dictionary prefix by the key right after the
+cancel (it dies at the cancel key itself or on the very next key), the prefix
+rule is back. Raw that dies that early is the habit-cancel signature (`susspend`:
+cancel at `suss`, raw dies at `sussp`; `classs`: cancel at `class`, raw dies at
+`classs`), whereas a natural word dies later, at an inflection two or more keys
+beyond the cancel (`missed`: cancel at `miss`, `misse` still begins `missel`, raw
+dies only at `missed`). The commit-time choice is unchanged.
 
 Measured cost and gain, three versions. Natural words whose COMMIT is right but
 which showed a wrong spelling before the space, on the 99,659 out-of-corpus
@@ -2683,9 +2685,10 @@ after a cancel-shaped double: `errp`, `errb`, `perrno`, `arrp`, `verrc` (raw
 which commits `errp`). Habit typing on-screen before the space on the 6,977-word
 corpus: 87.51% first version, 83.40% sticky alone (`classs` showed `classs`
 until the space), 86.37% now (main 71.10%). Natural on-screen before the space:
-83.33% = main for the first two (1 word, `troff`), 83.32% now (`troff` plus the
-habit strings `tassk` and `classs` typed literally, which the rule is meant to
-change). Habit FINAL output is not changed by any of this (89.39%).
+83.32% first version (6 words: `troff`, `missed`, `presses`, `perrig`, and the
+habit strings `tassk` and `classs`), 83.33% with the sticky rule alone (1 word,
+`troff`; main is 83.33%), 83.32% now (`troff` plus the habit strings `tassk` and
+`classs` typed literally, which the rule is meant to change). Habit FINAL output is not changed by any of this (89.39%).
 
 **The prefix index and the tap thread.** `Lexicon` keeps a sorted array of its
 lowercase words (`isPrefix` and `prefixDepth` are lower-bound binary searches,
