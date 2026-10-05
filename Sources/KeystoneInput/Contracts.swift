@@ -111,9 +111,21 @@ public struct InputBehavior: Sendable, Equatable {
     /// for browsers/Excel). Default false = both events carry the string,
     /// the tap's original behavior; this is an opt-in remedy.
     public var textOnKeyDownOnly: Bool
+    /// "Sửa lỗi gợi ý" — before the backspaces, type a placeholder character
+    /// and send one extra Backspace (see `KeystrokeExecutor.execute`). Needed
+    /// because an inline-autocomplete selection (Chrome omnibox, Excel) eats
+    /// the first synthetic Backspace, leaving the old character behind
+    /// ("hộ" -> "hoộ"). Mirrors OpenKey's workaround. Already masked per app
+    /// by the caller (off in terminals/Spotlight); default false.
+    public var clearsInlineSuggestion: Bool
 
-    public init(sendEachKeystroke: Bool = false, textOnKeyDownOnly: Bool = false) {
+    public init(
+        sendEachKeystroke: Bool = false,
+        textOnKeyDownOnly: Bool = false,
+        clearsInlineSuggestion: Bool = false
+    ) {
         self.sendEachKeystroke = sendEachKeystroke
         self.textOnKeyDownOnly = textOnKeyDownOnly
+        self.clearsInlineSuggestion = clearsInlineSuggestion
     }
 }

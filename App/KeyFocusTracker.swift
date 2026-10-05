@@ -10,7 +10,9 @@
 // frontmost before the panel appeared. Apple defines
 // kAXFocusedApplicationAttribute as "the application element that is
 // currently accepting keyboard input" — exactly the question AppModel needs
-// answered to mask autoCapitalize while a terminal has focus. See
+// answered to mask autoCapitalize while a terminal has focus — and, for the
+// same reason, to mask the "Sửa lỗi gợi ý" placeholder in terminals and
+// Spotlight (InlineSuggestionFix). See
 // DECISIONS.md "Không tự viết hoa trong Terminal" → "Floating panels follow
 // keyboard focus, not activation" for the research behind this
 // (Karabiner-Elements, Input Source Pro, Hammerspoon all read AX for the
@@ -36,11 +38,18 @@ final class KeyFocusTracker {
 
     /// Called with the bundle id of the app currently accepting keyboard
     /// input (`nil` for an unbundled app) after every `refresh()` whose AX
-    /// read succeeded — a failed read calls nothing (see `refresh()`).
+    /// read succeeded — a failed read calls `onFocusUnknown` instead (see
+    /// `refresh()`).
     /// `@MainActor` because `refresh()` only ever calls it from the main
     /// actor (this class is `@MainActor`), so the caller can assign a plain
     /// main-actor closure with no `Task` hop.
     var onFocus: (@MainActor (String?) -> Void)?
+
+    /// Called after every `refresh()` whose AX read FAILED. The caller may
+    /// re-derive state that is safe to guess from NSWorkspace's frontmost app
+    /// (the suggestion-fix gate). Separate from `onFocus` so "failed read =
+    /// keep last known" stays true for everything else.
+    var onFocusUnknown: (@MainActor () -> Void)?
 
     private let systemWide: AXUIElement = AXUIElementCreateSystemWide()
     private var throttle = RefreshThrottle(interval: 0.1)
@@ -119,12 +128,18 @@ final class KeyFocusTracker {
         applyMessagingTimeoutIfNeeded()
         let read = readFocusedApp()
         throttle.didRun(at: ProcessInfo.processInfo.systemUptime)
-        // A failed read is "no new information", NOT "the app behind the
-        // panel": falling back to NSWorkspace here would let one transient
-        // AX timeout on a busy iTerm2 panel flip AppModel's key-focus app to
-        // the app underneath and reset the engine mid-word. The activation
-        // path already keeps the NSWorkspace answer current on its own.
-        if case .app(let bundleID) = read { onFocus?(bundleID) }
+        // For `onFocus` (keyFocusBundleID) a failed read is "no new
+        // information", NOT "the app behind the panel": falling back to
+        // NSWorkspace there would let one transient AX timeout on a busy
+        // iTerm2 panel flip AppModel's key-focus app to the app underneath and
+        // reset the engine mid-word. The activation path already keeps the
+        // NSWorkspace answer current on its own. `onFocusUnknown` lets the
+        // caller re-derive only state that is safe to guess (the suggestion
+        // gate), where a wrong guess costs far less than a gate stuck OFF.
+        switch read {
+        case .app(let bundleID): onFocus?(bundleID)
+        case .unknown: onFocusUnknown?()
+        }
     }
 
     /// What one AX read could tell about the app accepting keyboard input.
@@ -132,7 +147,8 @@ final class KeyFocusTracker {
         /// The focused app's bundle id — `nil` for an unbundled app (e.g.
         /// `swift run Keystone`), which is a real answer, not a failure.
         case app(bundleID: String?)
-        /// The read failed; keep whatever is already known.
+        /// The read failed; keep whatever is already known, except that
+        /// `onFocusUnknown` lets the caller re-derive state that is safe to guess.
         case unknown
     }
 
@@ -186,11 +202,11 @@ final class KeyFocusTracker {
         case .ok:
             Self.log.info("AX focused-application read recovered")
         case .axError(let error):
-            Self.log.error("AX focused-application read failed (AXError \(error.rawValue, privacy: .public)) — keeping the last known focus")
+            Self.log.error("AX focused-application read failed (AXError \(error.rawValue, privacy: .public)) — keeping the last known focus (suggestion gate falls back to the frontmost app)")
         case .unexpectedElementType:
-            Self.log.error("AX focused-application read returned an unexpected CF type — keeping the last known focus")
+            Self.log.error("AX focused-application read returned an unexpected CF type — keeping the last known focus (suggestion gate falls back to the frontmost app)")
         case .appUnresolved:
-            Self.log.error("AX focused-application pid did not resolve to a running app — keeping the last known focus")
+            Self.log.error("AX focused-application pid did not resolve to a running app — keeping the last known focus (suggestion gate falls back to the frontmost app)")
         case .noBundleIdentifier:
             Self.log.debug("focused app has no bundle identifier")
         }

@@ -81,3 +81,60 @@ struct ExecutorTests {
         #expect(sink.texts.isEmpty)
     }
 }
+
+// MARK: - clearInlineSuggestion ("Sửa lỗi gợi ý" inline-autocomplete fix)
+//
+// Order matters here (placeholder text BEFORE the backspaces), which the
+// two-array FakeSink above cannot express, so these use a single ordered log.
+
+private enum Op: Equatable {
+    case text(String)
+    case backspace(Int)
+}
+
+private final class OrderSink: EventSink {
+    var ops: [Op] = []
+    func postBackspace(count: Int) { ops.append(.backspace(count)) }
+    func postText(_ text: String) { ops.append(.text(text)) }
+}
+
+@Suite("Executor clearInlineSuggestion")
+struct ExecutorInlineSuggestionTests {
+    private let placeholder = "\u{202F}"
+
+    @Test func flagOnWithBackspaceTypesPlaceholderThenOneExtraBackspace() {
+        let sink = OrderSink()
+        KeystrokeExecutor(sink: sink)
+            .execute(EngineResult(backspaceCount: 1, text: "ô"), clearInlineSuggestion: true)
+        #expect(sink.ops == [.text(placeholder), .backspace(2), .text("ô")])
+    }
+
+    @Test func flagOnWithoutBackspaceIsUnchanged() {
+        let sink = OrderSink()
+        KeystrokeExecutor(sink: sink)
+            .execute(EngineResult(backspaceCount: 0, text: "a"), clearInlineSuggestion: true)
+        #expect(sink.ops == [.text("a")])
+    }
+
+    @Test func flagOffIsUnchanged() {
+        let sink = OrderSink()
+        KeystrokeExecutor(sink: sink)
+            .execute(EngineResult(backspaceCount: 2, text: "việt"), clearInlineSuggestion: false)
+        #expect(sink.ops == [.backspace(2), .text("việt")])
+    }
+
+    @Test func flagOnWithEachGraphemeSendsPlaceholderOnce() {
+        let sink = OrderSink()
+        KeystrokeExecutor(sink: sink)
+            .execute(EngineResult(backspaceCount: 2, text: "việt"), eachGrapheme: true, clearInlineSuggestion: true)
+        #expect(sink.ops == [.text(placeholder), .backspace(3),
+                             .text("v"), .text("i"), .text("ệ"), .text("t")])
+    }
+
+    @Test func flagOnWithBackspaceAndEmptyTextSendsNoText() {
+        let sink = OrderSink()
+        KeystrokeExecutor(sink: sink)
+            .execute(EngineResult(backspaceCount: 3, text: ""), clearInlineSuggestion: true)
+        #expect(sink.ops == [.text(placeholder), .backspace(4)])
+    }
+}

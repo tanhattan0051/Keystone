@@ -83,8 +83,8 @@ public final class EventTapController: @unchecked Sendable {
     }
 
     /// Updates the posting-behavior snapshot (`sendEachKeystroke`,
-    /// `textOnKeyDownOnly`) the tap reads on the next edit. Safe to call from
-    /// any thread; guarded by `behaviorLock`.
+    /// `textOnKeyDownOnly`, `clearsInlineSuggestion`) the tap reads on the
+    /// next edit. Safe to call from any thread; guarded by `behaviorLock`.
     public func updateBehavior(_ b: InputBehavior) {
         behaviorLock.withLock { behavior = b }
     }
@@ -191,7 +191,7 @@ public final class EventTapController: @unchecked Sendable {
         // those too, and blocked held-Delete. A visible extra character is
         // recoverable by the user; a silently eaten keystroke is not.
         let raw = makeRawKey(event)
-        let (suppress, edit, _) = engine.handle(raw)
+        let (suppress, edit, decision) = engine.handle(raw)
         if let edit {
             // One cheap lock acquire per edit (not per raw keystroke that
             // passes through untouched) — acceptable on the hot path, same
@@ -200,7 +200,12 @@ public final class EventTapController: @unchecked Sendable {
             let sink = TapSink(source: synthSource, proxy: proxy,
                                backspaceDown: backspaceDown, backspaceUp: backspaceUp,
                                textOnKeyDownOnly: b.textOnKeyDownOnly)
-            KeystrokeExecutor(sink: sink).execute(edit, eachGrapheme: b.sendEachKeystroke)
+            KeystrokeExecutor(sink: sink).execute(
+                edit,
+                eachGrapheme: b.sendEachKeystroke,
+                clearInlineSuggestion: InlineSuggestionFix.appliesToEdit(
+                    enabledForApp: b.clearsInlineSuggestion, decision: decision, edit: edit)
+            )
         }
         return suppress ? nil : Unmanaged.passUnretained(event)
     }
@@ -234,7 +239,7 @@ private struct TapSink: EventSink {
     let proxy: CGEventTapProxy
     let backspaceDown: CGEvent?
     let backspaceUp: CGEvent?
-    /// "Sửa lỗi gợi ý" (`autoFixSuggestion`, default ON): when true, the
+    /// "Sửa lỗi gợi ý" (`autoFixSuggestion`, default OFF): when true, the
     /// Unicode string is set on the keyDown event only — the keyUp is posted
     /// bare — which is the documented remedy for browsers/Excel doubling
     /// synthesized text. When false, both events carry the string (the old
