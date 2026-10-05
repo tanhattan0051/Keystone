@@ -263,10 +263,15 @@ final class AppModel {
         didSet { UserDefaults.standard.set(rememberCodePerApp, forKey: Keys.rememberCodePerApp) }
     }
 
-    /// "Sửa lỗi gợi ý (trình duyệt, Excel,...)" — when ON, posts the composed
-    /// Unicode string on the synthetic keyDown only (the anti-double-char
-    /// remedy for browsers/Excel). Default OFF: both keyDown+keyUp carry the
-    /// string, unchanged from the tap's original behavior (design spec E.2/E.3).
+    /// "Sửa lỗi gợi ý (trình duyệt, Excel,...)" — when ON, does two things:
+    /// (1) posts the composed Unicode string on the synthetic keyDown only,
+    /// and (2) before each edit that deletes text, types a placeholder and
+    /// sends one extra Backspace so an inline-autocomplete selection (Chrome
+    /// omnibox) cannot swallow the first Backspace ("hộ" -> "hoộ"); (2) is
+    /// masked off in terminals and Spotlight (`InlineSuggestionFix`). Default
+    /// OFF: both keyDown+keyUp carry the string and nothing extra is sent,
+    /// unchanged from the tap's original behavior. Rationale and trade-offs:
+    /// DECISIONS.md "Sửa lỗi gợi ý: xoá phần gợi ý tự điền trước khi xoá lùi".
     var autoFixSuggestion: Bool = AppModel.loadBool(Keys.autoFixSuggestion, default: false) {
         didSet {
             UserDefaults.standard.set(autoFixSuggestion, forKey: Keys.autoFixSuggestion)
@@ -508,6 +513,13 @@ final class AppModel {
     /// terminal already open before launch, or Keystone itself being
     /// frontmost, both matter here), so it starts `false` instead.
     private var keyFocusAppIsTerminal = false
+    /// Whether the app currently accepting keyboard input may receive the
+    /// inline-autocomplete workaround (`InlineSuggestionFix.allowed`) — false
+    /// in terminals and Spotlight. Same feeding/seeding as
+    /// `keyFocusAppIsTerminal`, except that a failed AX read re-derives it from
+    /// the frontmost app (`onFocusUnknown`) instead of keeping the last value;
+    /// starts `true` (unbundled/unknown is allowed).
+    private var keyFocusAppAllowsSuggestionFix = true
     /// AX-based correction for `keyFocusAppIsTerminal`: a non-activating
     /// floating panel (e.g. iTerm2's F1 hotkey window) can take keyboard
     /// focus without ever firing `NSWorkspace.didActivateApplicationNotification`,
@@ -591,6 +603,21 @@ final class AppModel {
             // the app-activation observer below does, rather than assuming.
             Task { @MainActor in self?.toggleVietnameseFromHotKey() }
         }
+        // AX reads fail often (AXError -25212). Without this, a floating panel
+        // that set the gate false and then lost focus without an activation
+        // notification would leave it false in Chrome for good ("hoộ" again).
+        // Asymmetric risk: gate wrongly OFF in a browser = the bug; wrongly ON
+        // in a terminal = one invisible character + an extra Backspace. So on
+        // a failed read, fall back to the frontmost app — for this gate only;
+        // the terminal mask and keyFocusBundleID keep "failed read = keep last".
+        // Spotlight side: it is a non-activating panel, never the frontmost
+        // app, so after a failed read during a Spotlight session this can turn
+        // the fix ON inside it; its mask holds only while AX reads succeed.
+        // Accepted: a gate stuck OFF in Chrome is the reported bug.
+        keyFocusTracker.onFocusUnknown = { [weak self] in
+            self?.updateKeyFocusAppAllowsSuggestionFix(
+                bundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+        }
         keyFocusTracker.onFocus = { [weak self] bundleID in
             guard let self else { return }
             // Comparing against the value the ACTIVATION path also writes is
@@ -607,6 +634,7 @@ final class AppModel {
                 self.keyFocusBundleID = bundleID
             }
             self.updateKeyFocusAppIsTerminal(bundleID: bundleID)
+            self.updateKeyFocusAppAllowsSuggestionFix(bundleID: bundleID)
         }
         applySwitchHotKeyRegistration()
         installSwitchKeyMonitors()
@@ -622,6 +650,7 @@ final class AppModel {
         let launchBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         keyFocusBundleID = launchBundleID
         updateKeyFocusAppIsTerminal(bundleID: launchBundleID)
+        updateKeyFocusAppAllowsSuggestionFix(bundleID: launchBundleID)
         // A floating panel that's ALREADY the one accepting keyboard input
         // at launch (e.g. iTerm2's hotkey window, summoned before Keystone
         // even started) never fires an activation notification either — the
@@ -809,23 +838,43 @@ final class AppModel {
         pushConfig()
     }
 
+    /// Recomputes `keyFocusAppAllowsSuggestionFix` for `bundleID` and pushes
+    /// `InputBehavior` only when it flips — same push-on-flip pattern as
+    /// `updateKeyFocusAppIsTerminal(bundleID:)`.
+    private func updateKeyFocusAppAllowsSuggestionFix(bundleID: String?) {
+        let allowed = InlineSuggestionFix.allowed(bundleID: bundleID)
+        guard allowed != keyFocusAppAllowsSuggestionFix else { return }
+        keyFocusAppAllowsSuggestionFix = allowed
+        pushInputBehavior()
+    }
+
     /// The AX focus read (`keyFocusTracker`) only matters while some
-    /// capitalization path can actually fire —
+    /// capitalization path can actually fire, or while `autoFixSuggestion`
+    /// needs to know whether the focused app is Spotlight/a terminal (a
+    /// Spotlight panel or iTerm2 hotkey window takes key focus without an
+    /// activation notification) —
     /// `TerminalApps.capitalizationCanFire` mirrors `EngineController.handle`'s
     /// own gate, including whether Vietnamese itself is on (inactive routes
     /// capitalization differently — see that function's doc comment). With
-    /// the defaults (`autoCapitalize` OFF, macros OFF) this gate is false, so
+    /// the defaults (`autoCapitalize` OFF, macros OFF, `autoFixSuggestion` OFF) this gate is false, so
     /// Keystone makes no AX attribute reads / no AX requests to other apps —
     /// a consequence of the gate, not a hardcoded guarantee. Not cached: it
     /// depends on toggles that can change mid-session, and it's only ever
     /// consulted from `requestKeyFocusRefresh()`, never on the tap's hot path.
     private var needsKeyFocusTracking: Bool {
-        accessibilityTrusted && TerminalApps.capitalizationCanFire(
-            vietnameseEnabled: enabled,
-            autoCapitalize: autoCapitalize,
-            macrosEnabled: macrosEnabled,
-            macroAutoCapitalize: macroAutoCapitalize,
-            macrosExpandWhenVietnameseOff: macrosExpandWhenVietnameseOff
+        accessibilityTrusted && (
+            TerminalApps.capitalizationCanFire(
+                vietnameseEnabled: enabled,
+                autoCapitalize: autoCapitalize,
+                macrosEnabled: macrosEnabled,
+                macroAutoCapitalize: macroAutoCapitalize,
+                macrosExpandWhenVietnameseOff: macrosExpandWhenVietnameseOff
+            ) || InlineSuggestionFix.needsFocusTracking(
+                autoFixSuggestion: autoFixSuggestion,
+                vietnameseEnabled: enabled,
+                macrosEnabled: macrosEnabled,
+                macrosExpandWhenVietnameseOff: macrosExpandWhenVietnameseOff
+            )
         )
     }
 
@@ -853,6 +902,7 @@ final class AppModel {
         controller.resetBuffer()
         keyFocusBundleID = newBundleID
         updateKeyFocusAppIsTerminal(bundleID: newBundleID)
+        updateKeyFocusAppAllowsSuggestionFix(bundleID: newBundleID)
 
         guard
             let newBundleID,
@@ -1118,7 +1168,11 @@ final class AppModel {
     /// `InputBehavior` snapshot (design spec E.2/E.3) — the input-layer
     /// counterpart to `pushConfig()` above.
     private func pushInputBehavior() {
-        tap.updateBehavior(InputBehavior(sendEachKeystroke: sendEachKeystroke, textOnKeyDownOnly: autoFixSuggestion))
+        tap.updateBehavior(InputBehavior(
+            sendEachKeystroke: sendEachKeystroke,
+            textOnKeyDownOnly: autoFixSuggestion,
+            clearsInlineSuggestion: autoFixSuggestion && keyFocusAppAllowsSuggestionFix
+        ))
     }
 
     /// Samples `IsSecureEventInputEnabled()` (system-wide, works from an

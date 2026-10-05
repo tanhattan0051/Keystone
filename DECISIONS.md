@@ -949,8 +949,12 @@ last known key-focus app stands. It deliberately does NOT fall back to
 key that names the app UNDERNEATH it, so one transient timeout on a busy
 iTerm2 panel would flip the key-focus app away and back and reset the engine
 mid-word (see the reset below). The activation path already keeps the
-NSWorkspace answer current on its own. A focused app with no bundle
-identifier (an unbundled process) is a real answer (`nil`), not a failure.
+NSWorkspace answer current on its own. That stays true for `keyFocusBundleID`
+and the terminal capitalization mask; the one exception is the suggestion-fix
+gate, which re-derives from `NSWorkspace.frontmostApplication` on a failed read
+(see "Sửa lỗi gợi ý: xoá phần gợi ý tự điền trước khi xoá lùi"). A focused app
+with no bundle identifier (an unbundled process) is a real answer (`nil`), not
+a failure.
 
 *Triggers:* activation stays the fast path (cheap, no AX call) via
 `handleAppActivation`. The AX read itself is driven by BOTH the GLOBAL and
@@ -1006,17 +1010,19 @@ runs on its own dedicated thread (`EventTapController`), so none of this can
 ever block typing.
 
 *Gate:* `AppModel.needsKeyFocusTracking` = `accessibilityTrusted &&
-TerminalApps.capitalizationCanFire(vietnameseEnabled: enabled, autoCapitalize:
+(TerminalApps.capitalizationCanFire(vietnameseEnabled: enabled, autoCapitalize:
 autoCapitalize, macrosEnabled: macrosEnabled, macroAutoCapitalize:
-macroAutoCapitalize, macrosExpandWhenVietnameseOff: macrosExpandWhenVietnameseOff)`
-— a pure function (`Sources/KeystoneInput/TerminalApps.swift`, unit-tested)
+macroAutoCapitalize, macrosExpandWhenVietnameseOff: macrosExpandWhenVietnameseOff)
+|| InlineSuggestionFix.needsFocusTracking(autoFixSuggestion:vietnameseEnabled:macrosEnabled:macrosExpandWhenVietnameseOff:))`
+(the second term is described in "Sửa lỗi gợi ý: xoá phần gợi ý tự điền trước khi xoá lùi").
+The capitalization term is a pure function (`Sources/KeystoneInput/TerminalApps.swift`, unit-tested)
 mirroring `EngineController.handle`'s own gate: while Vietnamese is active,
 the engine's usual `autoCapitalize`/macro-triggered paths run
 (`autoCapitalize || (macrosEnabled && macroAutoCapitalize)`); while
 inactive, `handle` only routes through the engine at all (the "English-mode
 macros" path) when BOTH `macrosEnabled` AND `macrosExpandWhenVietnameseOff`
 are on, so capitalization there can only come from `macroAutoCapitalize` on
-top of that same pair. With the defaults (`autoCapitalize` OFF, macros OFF)
+top of that same pair. With the defaults (`autoCapitalize` OFF, macros OFF, `autoFixSuggestion` OFF)
 this gate evaluates false, so Keystone makes no AX attribute reads / no AX
 requests to other apps — that's a consequence of the gate being off, not a
 hardcoded guarantee that holds independently of it.
@@ -1454,8 +1460,9 @@ default.
 `TapSink.postText` now takes `textOnKeyDownOnly: Bool`. When true, the synthesized Unicode string is set on the keyDown event only —
 the keyUp is still posted (tagged with `selfTag`, flags cleared) but carries
 no string. When false, both events carry the string, matching the tap's
-original behavior. This is the documented remedy for browsers/Excel doubling
-synthesized text. It defaults **OFF**, so the tap's default posting is
+original behavior. This is a documented remedy for browsers/Excel doubling
+synthesized text (it does NOT cover inline autocomplete — see "Sửa lỗi gợi ý: xoá
+phần gợi ý tự điền trước khi xoá lùi" below). It defaults **OFF**, so the tap's default posting is
 UNCHANGED (both events, as before) — turning it on is an opt-in switch to
 keyDown-only. When enabling it, verify on real browsers/Excel/Terminal — see
 HANDOFF.md [VERIFY] #2 for the double-char background. `postBackspace` and the
@@ -1467,6 +1474,105 @@ file: the live keyDown-only posting needs a real synthetic `CGEvent` pair and
 a real target app to observe, so it isn't unit-tested. The per-grapheme split
 lives in the pure `KeystrokeExecutor` and is covered by
 `Tests/KeystoneInputTests/ExecutorTests.swift` against the fake `EventSink`.
+
+## Sửa lỗi gợi ý: xoá phần gợi ý tự điền trước khi xoá lùi
+
+**Symptom.** Telex `hooj` ("hộ") in Chrome's omnibox yields `hoộ`.
+
+**Root cause.** Keystone suppresses every character key and posts a synthetic edit: N Backspaces,
+then the Unicode string. The omnibox inline-autocompletes: after `ho` it shows `ho` plus a SELECTED
+suffix from history (e.g. `stinger.com`). On the second `o` the engine returns `backspaceCount 1` +
+`ô`; the first Backspace only deletes the selected suggestion, so the typed `o` survives and the
+screen reads `hoô`. The following `j` (no suggestion any more) replaces `ô` with `ộ` correctly, giving
+`hoộ`. The older keyDown-only `autoFixSuggestion` behaviour does not touch this.
+
+**OpenKey reference.** OpenKey's "Sửa lỗi gợi ý" option (`SendEmptyCharacter()` / `FixRecommendBrowser`
+in `OpenKey.mm`) types U+202F (narrow no-break space) BEFORE the Backspaces, which replaces the
+selection, then sends ONE extra Backspace to remove it. OpenKey disables this in Spotlight. For Sublime
+Text 2/3 (`_niceSpaceApp` in `OpenKey.mm`) it sends U+200C instead of U+202F; Keystone does not.
+
+**Mechanism.** `KeystrokeExecutor.execute(..., clearInlineSuggestion:)`: when on and
+`backspaceCount > 0`, `postText("\u{202F}")`, `postBackspace(count: n + 1)`, then the text as before.
+Net zero when the field keeps the placeholder. U+202F plus an extra Backspace was chosen over
+OpenKey's beta Chromium variant (Shift+Left) because that one depends on the selection's direction;
+two plain events do not.
+
+**Only when `backspaceCount > 0`.** A pure insertion already replaces a selection by itself, so most
+keystrokes stay byte-for-byte as before.
+
+**Never on a pure-deletion Backspace.** `InlineSuggestionFix.appliesToEdit` is false when the decision is
+`KeyDecision.backspace` AND the edit text is empty. Without it, "face" + physical Delete produced edit
+`bs=1 text=""` and so placeholder + 2 Backspaces: the suggestion AND a typed letter vanished ("fac").
+Native parity: Delete over a selected suggestion should just dismiss it; native Chrome and pre-change
+Keystone give "face", and OpenKey never sends its empty character on Delete either. A Backspace that
+makes the engine re-render (last raw key was a tone/mark key, e.g. "vieetj" + Backspace -> `bs=2
+text="êt"`) is NOT a pure deletion: it is an ordinary rewrite, and without the placeholder its first
+synthetic Backspace would eat only the selection and garble the word ("việêt"), so it gets the
+placeholder like any other edit.
+
+**Known desync (pre-existing, not fixed).** After a pure-deletion Backspace that only dismissed a
+suggestion, the engine has dropped one raw key that the screen still shows, so a later tone edit in the
+same word can garble it (e.g. omnibox "vie" + Backspace + "ejt"). Keystone cannot tell whether a
+Backspace hit a selection; OpenKey shares this.
+
+**Terminal and Spotlight mask** (`InlineSuggestionFix.allowed`): terminals have no selection-style
+autocomplete, so an invisible character plus an extra Backspace is pure risk there; OpenKey also
+disables it in Spotlight. The per-app flags `keyFocusAppIsTerminal` / `keyFocusAppAllowsSuggestionFix`
+are updated together everywhere (AX onFocus, launch seed, app activation) and `InputBehavior` is
+pushed only when the value flips.
+
+**AX-failure fallback.** Keystone's AX focused-application read fails often on Tân's machine
+(AXError -25212, e.g. while Chrome has focus). Scenario: Chrome frontmost, iTerm2 F1 panel
+(non-activating) takes focus, an AX read succeeds and names iTerm2, the gate goes false; the panel
+hides, focus returns to Chrome with NO activation notification, every AX read fails, the gate stays
+false and `hoộ` is back. So `KeyFocusTracker.onFocusUnknown` (called on a failed read) re-evaluates
+ONLY this gate from `NSWorkspace.shared.frontmostApplication`. The risk is asymmetric: the gate
+wrongly OFF in a browser is the bug; wrongly ON in a terminal costs one invisible character plus an
+extra Backspace. The capitalization terminal mask and `keyFocusBundleID` keep "failed read = keep
+last known". Spotlight is a non-activating panel and is never the frontmost app, so after a failed AX
+read during a Spotlight session the fallback can turn the fix ON inside Spotlight; its mask holds only
+while AX reads succeed. Accepted, because a gate stuck OFF in Chrome is the reported bug.
+
+**Tracking gate.** AX tracking is needed for this toggle only while the engine can emit edits at all:
+`InlineSuggestionFix.needsFocusTracking` = `autoFixSuggestion && (vietnameseEnabled || (macrosEnabled
+&& macrosExpandWhenVietnameseOff))` (pure, unit-tested; mirrors `TerminalApps.capitalizationCanFire`
+and the inactive path of `EngineController.handle`). `needsKeyFocusTracking` = `accessibilityTrusted
+&& (capitalizationCanFire(...) || needsFocusTracking(...))`. Side effect: users who had AX tracking off
+(autoCapitalize and macro-capitalize OFF) get it switched on by this toggle, which brings the existing
+AX-path buffer reset on focus change.
+
+**Trade-offs (accepted, opt-in).**
+- U+202F is Unicode whitespace (Zs). A field that strips whitespace on input (JS `trim()`, `/\s/`
+  replace) or is already at `maxlength` drops the placeholder, so the extra Backspace deletes one real
+  character. Inherent to OpenKey's mechanism.
+- When focus is not a text field (e.g. Mail's message list) every `bs > 0` edit already sends
+  Backspaces; the fix adds one more.
+- The AX-tracking side effect above.
+
+**Reconciling with design spec E.2.** E.2 listed OpenKey's "empty char + extra backspace" among the
+causes of its double-char issues (#315/#270/#255/#237/#246) and said Keystone would not need it. E.2
+attributed those doublings to the empty char COMBINED with a per-keystroke `CGWindowListCopyWindowInfo`
+Spotlight scan on the hot path and event-ordering races. Keystone has no hot-path scan and posts
+synchronously from the tap, and NFC alone cannot handle a selection the app adds on its own, so the
+placeholder is reintroduced as an opt-in remedy, default OFF.
+
+**Default OFF** (ship dormant).
+
+**[VERIFY] on-device checklist (Tân must run; only the first item is verified so far).**
+- Chrome omnibox `hooj` -> `hộ`. **Verified by Tân on 2026-10-05 (local build 1.1.8).**
+- Chrome omnibox `face` + Backspace dismisses only the suggestion.
+- Chrome omnibox `vieetj` + Backspace -> `viêt` (re-render Backspace keeps the placeholder).
+- Chrome omnibox `vie` + Backspace + `ejt`: expect the known desync to garble it (document the result).
+- Safari address bar.
+- A normal Chrome web text field.
+- Google Docs.
+- Excel cell autocomplete.
+- Mail "To:" field.
+- An Electron app (Slack / Discord / VS Code).
+- iTerm2 F1 panel, then back to Chrome: `hooj` still fixed.
+- Spotlight unchanged, including after AX read failures.
+- Sublime Text (OpenKey uses U+200C there; check whether U+202F misbehaves).
+- Toggle OFF: nothing changes.
 
 ## Bảng mã mặc định — Unicode dựng sẵn (NFC), không phải tổ hợp
 

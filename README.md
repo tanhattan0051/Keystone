@@ -155,7 +155,9 @@ Cùng với **self-tag** chống xử lý lại chính event mình sinh ra, **kh
 - **Khởi động cùng macOS** *(mặc định tắt, `SMAppService`)*, **hiện icon trên Dock** *(mặc định
   tắt)*, **mở Bảng điều khiển khi khởi động** *(mặc định tắt)*.
 - **Sửa lỗi gợi ý** & **Gửi từng phím** *(mặc định tắt):* né lỗi nhân đôi ký tự ở một số trình duyệt
-  / bảng tính.
+  / bảng tính. "Sửa lỗi gợi ý" còn xử lý ô có gợi ý tự điền (thanh địa chỉ Chrome: gõ `hộ` ra `hoộ`)
+  bằng cách gõ một ký tự đệm rồi xoá thêm một phím trước khi sửa chữ; không áp dụng trong Terminal
+  và Spotlight. Đánh đổi: ô tự xoá khoảng trắng có thể mất 1 chữ. Chưa kiểm chứng trên máy thật.
 - **Khoá một phiên bản** (single-instance) tránh chạy trùng gây gõ đôi.
 
 ### Bảng điều khiển
