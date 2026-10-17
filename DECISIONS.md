@@ -2930,6 +2930,29 @@ missing staged app, a bundle tampered after signing, and a wait timeout. In
 every failure case the installed bundle is untouched and the old app is
 relaunched (except on timeout).
 
+**Off the main actor, with a real size cap.** `Updater` stays `@MainActor` but
+only does the alerts, the writability check, launching the script and quitting.
+Downloads, Ed25519 verification, extraction, the plist check, `codesign` and
+`xattr` run in a nonisolated pipeline; only Sendable values cross back. (The tap
+has its own thread, but the menu bar, Control Panel, switch-key monitors and AX
+focus tracking run on main and froze for seconds during an update.) Downloads
+use `URLSession.bytes(for:)`: a declared `Content-Length` over the cap is
+rejected before any body is read, and the body streams through the pure
+`CappedStreamWriter` (64 KB buffered writes into the work dir) which throws on
+the first byte past the cap, so at most the cap reaches disk and the partial
+file is removed. Caps: 64 MB for `Keystone.zip` (v1.1.8's is 1.8 MB), 1 KB for
+the signature. A first version used `download(for:delegate:)` with a progress
+delegate; the review showed that API never calls `didWriteData` on a task
+delegate, so that cap was dead code.
+
+**Script logging can't abort the swap.** The cleanup function and traps are
+installed before anything that can fail, and the log redirect falls back to
+`/dev/null` when `update.log` can't be opened (a directory, root-owned,
+immutable). A first version opened the log before installing the trap: an
+unopenable log aborted the script after Keystone had quit, with nothing swapped
+or relaunched. `UpdateInstallScriptTests` covers it with `update.log` as a
+directory.
+
 **Not verified on a device:** the full download → quit → swap → relaunch path.
 The swap now requires every release to carry a valid (at least ad-hoc) code
 signature seal; `Scripts/release.sh` guarantees that.
@@ -3006,6 +3029,23 @@ just adds. Otherwise an alert offers **Gộp** (default) / **Thay thế toàn b�
 **Huỷ**, followed by a summary ("Đã thêm X, bỏ qua Y trùng"). Text is read as
 UTF-8, falling back to UTF-16 only when a UTF-16 BOM is present.
 
+**JSON vs text, and "nothing usable".** Tolerant decoding (below) means any
+JSON array of objects decodes, for example another tool's
+`[{"name":"vn","text":"Việt Nam"}]`, producing macros with empty triggers. A
+first version counted those, offered "Nhập N gõ tắt", and "Thay thế toàn bộ"
+then saved an empty list. The decision now lives in the pure layer:
+`MacroTable.importRules(from:decodeJSON:decodeText:)` decodes data that looks
+like JSON (`looksLikeJSON`: the first non-whitespace character after an optional
+BOM is `[` or `{`) only as JSON, so broken JSON surfaces its decode error instead
+of being text-parsed into junk triggers such as `[{"id"`; and it throws
+`noMacrosFound` when `usableRules` (non-empty trigger) is empty. The prompt shows
+the de-duplicated usable count, and a replace with an empty set is a no-op.
+When "+" adds a row the search query is cleared so the new row is visible, and
+"−" is disabled when no selected row is visible. In replace mode a repeated
+trigger keeps its first *enabled* occurrence (matching `MacroTable.init`, which
+fires the last enabled rule), so an export and re-import can't swap an enabled
+macro for a disabled duplicate.
+
 **Storage safety.** `Macro` decodes tolerantly (`decodeIfPresent` with the
 property defaults; a missing id gets a new UUID); explicit CodingKeys keep the
 encoded form identical. If an existing `macros.json` can't be read or decoded,
@@ -3030,12 +3070,17 @@ resigns active, and `startRecordingKey` refuses to start without a key window.
 `stopRecordingKey` is idempotent and every exit path goes through it, so the
 engine is restored exactly once per begin.
 
-The per-keyDown decision is pure, `SwitchKeyRecorder.action(keyCode:modifiers:)`:
-Escape → cancel and consume; any event with ⌘ → cancel and pass the event
-through, so ⌘W / ⌘Q / ⌘, keep working (⌘ belongs to the combo through the
-checkboxes; the recorder only captures the key); anything else → record. Escape
-wins over ⌘ because it is the documented cancel key and never a valid hot key.
-Not verified on a device: the resign-key / resign-active paths.
+The per-keyDown decision is pure,
+`SwitchKeyRecorder.action(keyCode:modifiers:comboModifiers:)`: Escape → cancel
+and consume (it wins over everything: it is the documented cancel key and never
+a valid hot key). An event with ⌘ when the combo's checkboxes do NOT include ⌘
+→ cancel and pass the event through, so ⌘W / ⌘Q / ⌘, keep working. An event
+with ⌘ when the combo DOES include ⌘ → record the key: the user is pressing
+their own chord (⌘⇧K), as in any shortcut recorder. A first version cancelled
+on every ⌘ event, which silently broke exactly that case (it worked in v1.1.8);
+the review caught it. Anything else → record. While recording, the button shows
+an "Esc để huỷ" caption. Not verified on a device: the resign-key /
+resign-active paths.
 
 ## AX focus change keeps a word typed in the new target
 
