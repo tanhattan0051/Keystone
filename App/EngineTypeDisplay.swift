@@ -19,6 +19,28 @@ extension InputMethod: CaseIterable, Identifiable {
         case .simpleTelex2: return "Simple Telex 2"
         }
     }
+
+    /// The engine has no Simple Telex rules yet (nothing in KeystoneEngine
+    /// branches on these cases), so both run exactly like Telex. The UI says
+    /// so rather than implying a behaviour that does not exist.
+    var behavesAsTelex: Bool {
+        switch self {
+        case .simpleTelex1, .simpleTelex2: return true
+        case .telex, .vni: return false
+        }
+    }
+
+    /// Short honesty note shown next to the method name; nil when the method
+    /// does what its name says.
+    var displayCaption: String? {
+        behavesAsTelex ? "(đang chạy như Telex)" : nil
+    }
+
+    /// Picker item label: name plus the caption when there is one.
+    var pickerLabel: String {
+        guard let caption = displayCaption else { return displayName }
+        return "\(displayName) \(caption)"
+    }
 }
 
 extension CodeTable: CaseIterable, Identifiable {

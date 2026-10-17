@@ -222,3 +222,120 @@ struct UpdateCheckShouldOfferTests {
         #expect(UpdateCheck.shouldOffer(currentVersion: "dev-build", release: release("1.0.0")) == false)
     }
 }
+
+@Suite("UpdateCheck.validateStagedBundle")
+struct StagedBundleValidationTests {
+    private let bundleID = "com.tanta.keystone"
+    private let current = SemVer(major: 1, minor: 1, patch: 8)
+    private let offered = SemVer(major: 1, minor: 2, patch: 0)
+
+    private func validate(id: String? = "com.tanta.keystone", version: String? = "1.2.0") -> StagedBundleCheck {
+        UpdateCheck.validateStagedBundle(
+            bundleIdentifier: id,
+            shortVersion: version,
+            expectedBundleIdentifier: bundleID,
+            offeredVersion: offered,
+            currentVersion: current
+        )
+    }
+
+    @Test func okWhenIdentifierAndVersionMatchAndNewer() {
+        #expect(validate() == .ok)
+    }
+
+    @Test func wrongBundleIdentifier() {
+        #expect(validate(id: "com.evil.app") == .wrongBundleIdentifier(found: "com.evil.app"))
+        #expect(validate(id: "com.tanta.Keystone") == .wrongBundleIdentifier(found: "com.tanta.Keystone"))
+    }
+
+    @Test func nilBundleIdentifierIsWrong() {
+        #expect(validate(id: nil) == .wrongBundleIdentifier(found: nil))
+    }
+
+    @Test func bundleIdentifierIsCheckedBeforeVersion() {
+        #expect(validate(id: "x", version: nil) == .wrongBundleIdentifier(found: "x"))
+    }
+
+    @Test func nilOrGarbageVersionIsUnreadable() {
+        #expect(validate(version: nil) == .unreadableVersion(found: nil))
+        #expect(validate(version: "banana") == .unreadableVersion(found: "banana"))
+        #expect(validate(version: "1.2") == .unreadableVersion(found: "1.2"))
+    }
+
+    @Test func replayedOldBuildUnderNewTagIsVersionMismatch() {
+        // Tag says 9.9.9, but the genuinely-signed zip inside is 1.0.0.
+        let result = UpdateCheck.validateStagedBundle(
+            bundleIdentifier: bundleID,
+            shortVersion: "1.0.0",
+            expectedBundleIdentifier: bundleID,
+            offeredVersion: SemVer(major: 9, minor: 9, patch: 9),
+            currentVersion: current
+        )
+        #expect(result == .versionMismatch(expected: SemVer(major: 9, minor: 9, patch: 9),
+                                           found: SemVer(major: 1, minor: 0, patch: 0)))
+    }
+
+    @Test func versionMatchingOfferedButNotNewerThanCurrentIsNotNewer() {
+        let result = UpdateCheck.validateStagedBundle(
+            bundleIdentifier: bundleID,
+            shortVersion: "1.1.8",
+            expectedBundleIdentifier: bundleID,
+            offeredVersion: current,
+            currentVersion: current
+        )
+        #expect(result == .notNewer(current: current, found: current))
+    }
+
+    @Test func everyFailureHasAVietnameseMessageAndOkHasNone() {
+        let failures: [StagedBundleCheck] = [
+            .wrongBundleIdentifier(found: nil),
+            .unreadableVersion(found: "x"),
+            .versionMismatch(expected: offered, found: current),
+            .notNewer(current: current, found: current),
+        ]
+        for failure in failures {
+            #expect(!failure.userMessage.isEmpty)
+        }
+        #expect(StagedBundleCheck.ok.userMessage.isEmpty)
+    }
+}
+
+@Suite("UpdateLimits")
+struct UpdateLimitsTests {
+    private let limit = 1_000
+
+    @Test func capsAreSane() {
+        #expect(UpdateLimits.maxZipBytes == 64 * 1024 * 1024)
+        #expect(UpdateLimits.maxSignatureBytes == 1024)
+    }
+
+    @Test func underTheLimitIsAcceptable() {
+        #expect(UpdateLimits.isAcceptable(byteCount: 999, expectedContentLength: 999, limit: limit))
+    }
+
+    @Test func exactlyAtTheLimitIsAcceptable() {
+        #expect(UpdateLimits.isAcceptable(byteCount: 1_000, expectedContentLength: 1_000, limit: limit))
+    }
+
+    @Test func oneByteOverIsRejected() {
+        #expect(!UpdateLimits.isAcceptable(byteCount: 1_001, expectedContentLength: nil, limit: limit))
+        #expect(!UpdateLimits.isAcceptable(byteCount: 0, expectedContentLength: 1_001, limit: limit))
+    }
+
+    @Test func unknownContentLengthFallsBackToActualBytes() {
+        #expect(UpdateLimits.isAcceptable(byteCount: 500, expectedContentLength: nil, limit: limit))
+        // URLResponse reports an unknown length as -1.
+        #expect(UpdateLimits.isAcceptable(byteCount: 500, expectedContentLength: -1, limit: limit))
+        #expect(!UpdateLimits.isAcceptable(byteCount: 5_000, expectedContentLength: -1, limit: limit))
+    }
+
+    @Test func contentLengthLieIsCaughtByActualBytes() {
+        // Header claims small, body is huge.
+        #expect(!UpdateLimits.isAcceptable(byteCount: 5_000, expectedContentLength: 10, limit: limit))
+    }
+
+    @Test func emptyBodyIsAcceptableHere() {
+        // Emptiness is the signature/zip verifier's problem, not a size one.
+        #expect(UpdateLimits.isAcceptable(byteCount: 0, expectedContentLength: 0, limit: limit))
+    }
+}

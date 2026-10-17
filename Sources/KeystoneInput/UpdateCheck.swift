@@ -163,3 +163,112 @@ public enum UpdateCheck {
         return isNewer(release.version, than: current)
     }
 }
+
+/// Upper bounds for what the updater will accept from the network, so a
+/// hostile or broken server cannot make the app swallow unbounded data
+/// before the signature gate even runs.
+public enum UpdateLimits {
+    public static let maxZipBytes = 64 * 1024 * 1024
+    public static let maxSignatureBytes = 1024
+
+    /// `expectedContentLength` is the server's claim (`nil` or negative =
+    /// unknown, as `URLResponse` reports -1); `byteCount` is what actually
+    /// arrived. Both are checked because the header can lie.
+    public static func isAcceptable(byteCount: Int64, expectedContentLength: Int64?, limit: Int) -> Bool {
+        let limit = Int64(limit)
+        if let expected = expectedContentLength, expected >= 0, expected > limit {
+            return false
+        }
+        return byteCount <= limit
+    }
+}
+
+public enum CappedStreamError: Error, Equatable, Sendable {
+    case tooLarge
+}
+
+/// Copies a byte stream to a file handle in buffered chunks and aborts the
+/// moment the running count passes `limit`. This is the real download cap:
+/// `URLSession.download(for:delegate:)` never reports progress to a task
+/// delegate, so the whole body would land on disk before any check ran.
+public enum CappedStreamWriter {
+    /// Returns the number of bytes written. Throws `.tooLarge` on the first
+    /// byte beyond `limit` (so at most `limit` bytes ever reach the handle)
+    /// and stops pulling from `bytes`, letting the caller cancel the request.
+    public static func write<S: AsyncSequence>(
+        _ bytes: S,
+        to handle: FileHandle,
+        limit: Int,
+        chunkSize: Int = 64 * 1024
+    ) async throws -> Int64 where S.Element == UInt8 {
+        var buffer = Data()
+        buffer.reserveCapacity(chunkSize)
+        var total: Int64 = 0
+        for try await byte in bytes {
+            total += 1
+            if total > Int64(limit) { throw CappedStreamError.tooLarge }
+            buffer.append(byte)
+            if buffer.count >= chunkSize {
+                try handle.write(contentsOf: buffer)
+                buffer.removeAll(keepingCapacity: true)
+            }
+        }
+        if !buffer.isEmpty { try handle.write(contentsOf: buffer) }
+        return total
+    }
+}
+
+/// Outcome of inspecting the `Info.plist` of an extracted update bundle.
+public enum StagedBundleCheck: Equatable, Sendable {
+    case ok
+    case wrongBundleIdentifier(found: String?)
+    case unreadableVersion(found: String?)
+    case versionMismatch(expected: SemVer, found: SemVer)
+    case notNewer(current: SemVer, found: SemVer)
+
+    /// Short Vietnamese text for the app alert. Empty for `.ok`.
+    public var userMessage: String {
+        switch self {
+        case .ok:
+            return ""
+        case .wrongBundleIdentifier:
+            return "Bản tải về không phải Keystone (sai mã định danh ứng dụng) — đã huỷ để an toàn"
+        case .unreadableVersion:
+            return "Không đọc được số phiên bản của bản tải về — đã huỷ để an toàn"
+        case .versionMismatch(let expected, let found):
+            return "Bản tải về là v\(found) nhưng bản phát hành công bố v\(expected) — đã huỷ để an toàn"
+        case .notNewer(let current, let found):
+            return "Bản tải về (v\(found)) không mới hơn bản đang dùng (v\(current)) — đã huỷ"
+        }
+    }
+}
+
+extension UpdateCheck {
+    /// The Ed25519 signature only proves the zip was once genuinely signed,
+    /// not that it is the build the release tag advertises. So the unpacked
+    /// bundle's own identity is cross-checked against the offered release:
+    /// a replayed OLD signed zip under a NEWER tag fails `versionMismatch`.
+    /// Order: bundle id (exact) -> version parses -> equals offered -> newer
+    /// than the running version.
+    public static func validateStagedBundle(
+        bundleIdentifier: String?,
+        shortVersion: String?,
+        expectedBundleIdentifier: String,
+        offeredVersion: SemVer,
+        currentVersion: SemVer
+    ) -> StagedBundleCheck {
+        guard bundleIdentifier == expectedBundleIdentifier else {
+            return .wrongBundleIdentifier(found: bundleIdentifier)
+        }
+        guard let shortVersion, let found = SemVer(shortVersion) else {
+            return .unreadableVersion(found: shortVersion)
+        }
+        guard found == offeredVersion else {
+            return .versionMismatch(expected: offeredVersion, found: found)
+        }
+        guard found > currentVersion else {
+            return .notNewer(current: currentVersion, found: found)
+        }
+        return .ok
+    }
+}

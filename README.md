@@ -14,7 +14,7 @@ diệt tận gốc lỗi kinh điển *"đang gõ tự nhiên mất tiếng Vi�
 ![Platform](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white)
 ![Swift](https://img.shields.io/badge/Swift-6.0-F05138?logo=swift&logoColor=white)
 ![UI](https://img.shields.io/badge/UI-SwiftUI-1575F9)
-![Tests](https://img.shields.io/badge/tests-261%20·%20251%20ca%20corpus-brightgreen)
+![Tests](https://img.shields.io/badge/tests-745%20·%20251%20ca%20corpus-brightgreen)
 ![License](https://img.shields.io/badge/License-GPLv3-blue)
 [![CI](https://github.com/tanhattan0051/Keystone/actions/workflows/ci.yml/badge.svg)](https://github.com/tanhattan0051/Keystone/actions/workflows/ci.yml)
 
@@ -67,9 +67,12 @@ Cùng với **self-tag** chống xử lý lại chính event mình sinh ra, **kh
 
 ### Đặt dấu & xử lý thông minh
 
-- **Đặt dấu kiểu mới / cũ** cho các cặp nguyên âm mở `oa`, `oe`, `uy`:
-  - Kiểu mới *(mặc định):* `hòa` · `khỏe` · `thủy`
-  - Kiểu cũ *(tuỳ chọn):* `hoà` · `khoẻ` · `thuỷ`
+- **Vị trí dấu thanh** cho các cặp nguyên âm mở `oa`, `oe`, `uy`:
+  - Mặc định (kiểu truyền thống): `hòa` · `khỏe` · `thủy`
+  - Tuỳ chọn "Đặt dấu oà, uý" (kiểu mới như UniKey/OpenKey): `hoà` · `khoẻ` · `thuỷ`
+  - *Lưu ý cho người đọc code:* tên enum `Orthography.modern` / `.classic` bị đặt ngược với quy ước
+    thường gặp (`.modern` cho ra `hòa`). Hành vi và nhãn trong app đều đúng; xem DECISIONS.md
+    "Orthography default".
 - **Tự khôi phục phím với từ sai** *(mặc định bật):* âm tiết không hợp lệ theo âm vị học sẽ tự trả về
   đúng chuỗi phím thô — nhờ đó gõ từ tiếng Anh như `coins`, `ruins`, `rains` không bị "Việt hoá" nhầm.
   Khi thói quen gõ đè phím dấu để **huỷ** dấu (`t a s s k` muốn "task") khiến phím thô có ký tự lặp
@@ -131,8 +134,10 @@ Cùng với **self-tag** chống xử lý lại chính event mình sinh ra, **kh
 - **Gõ tắt phụ âm** *(mặc định tắt):* đầu từ `f→ph`, `j→gi`, `w→qu`; sau nguyên âm `g→ng`, `h→nh`,
   `k→ch`.
 - **Macro (gõ tắt cụm từ)** *(mặc định tắt):* khớp chính xác, **phân biệt hoa/thường**, nổ đúng lúc
-  chốt từ — thắng cả xử lý tiếng Việt lẫn cơ chế khôi phục. Có thể **nhập trực tiếp file macro `.txt`
-  của OpenKey** và xuất ra JSON riêng.
+  chốt từ — thắng cả xử lý tiếng Việt lẫn cơ chế khôi phục. Có thể **nhập trực tiếp file macro xuất
+  từ OpenKey/UniKey** (dạng `tên:nội dung`, có hoặc không có dòng tiêu đề `;Compatible OpenKey...`),
+  file `tên<TAB>nội dung`, hoặc JSON của chính Keystone. Khi đã có sẵn gõ tắt, app hỏi **Gộp** (giữ cái
+  đang có, bỏ qua gõ tắt trùng tên, giống OpenKey) hay **Thay thế toàn bộ**. Xuất ra JSON.
 
 ### Chuyển chế độ theo ứng dụng
 
@@ -175,13 +180,13 @@ cập nhật, hiển thị) · **Thông tin**. Kèm cửa sổ **Công cụ chuy
 Tải bản mới nhất ở trang **[Releases](https://github.com/tanhattan0051/Keystone/releases/latest)** rồi
 làm theo 4 bước:
 
-1. Tải file **`Keystone-<phiên bản>.dmg`**.
-2. Mở file DMG vừa tải, **kéo `Keystone.app` vào thư mục `Applications`**.
+1. Tải file **`Keystone.zip`**.
+2. Giải nén (bấm đúp), **kéo `Keystone.app` vào thư mục `Applications`**.
 3. Mở **Keystone** từ Launchpad hoặc thư mục Applications.
 4. Khi được hỏi, **cấp quyền Accessibility** (bắt buộc — xem [Cấp quyền](#cấp-quyền-hệ-thống)), rồi
    bật/tắt tiếng Việt bằng chỉ báo **V/E** trên menu bar hoặc phím **⌃⇧**.
 
-> ⚠️ **Bản hiện tại chưa ký (unsigned).** Lần đầu mở, macOS báo *"không xác minh được nhà phát
+> ⚠️ **Bản hiện tại chỉ ký ad-hoc, chưa notarize** (chưa có tài khoản Apple Developer). Lần đầu mở, macOS báo *"không xác minh được nhà phát
 > triển"* → **chuột phải vào `Keystone.app` → Open** (bấm **Open** lần nữa). Nếu vẫn bị chặn, mở
 > **Terminal** và chạy:
 >
@@ -189,7 +194,9 @@ làm theo 4 bước:
 > xattr -dr com.apple.quarantine /Applications/Keystone.app
 > ```
 >
-> Yêu cầu: **macOS 14 trở lên**. Bản ký + notarize chính thức (mở là chạy luôn) sẽ có ở các release sau.
+> Yêu cầu: **macOS 14 trở lên**. Từ đó về sau app **tự cập nhật** (kiểm chữ ký Ed25519 và phiên bản
+> trước khi thay). Vì chữ ký ad-hoc đổi theo mỗi bản build, sau khi cập nhật macOS có thể đòi **cấp lại
+> quyền Accessibility**.
 
 ---
 
@@ -229,13 +236,13 @@ nghiệp vụ tiếng Việt nằm hết ở tầng engine dưới dạng **hàm
 
 ## Kiểm thử & CI
 
-- **Engine:** 132 hàm test chạy trên **251 ca corpus tiếng Việt** (11 file JSON: thanh, dấu, đặt dấu,
+- **Engine:** 434 test (tính cả các ca tham số hoá) chạy trên **251 ca corpus tiếng Việt** (11 file JSON: thanh, dấu, đặt dấu,
   vị trí, quick-telex, VNI, regression, khôi phục…) cùng bộ test thuần cho `Lexicon`/`RestoreDecision`
   (kể cả "subsequence guard" chặn gõ tắt phụ âm biến `nike` thành `niche`).
-- **Tầng nhập:** 129 hàm test (translator, executor, engine-controller, phím chuyển, smart-switch,
-  khôi phục theo từ điển — kể cả một bộ chạy trên `/usr/share/dict/words` thật, tự bỏ qua nếu máy không
+- **Tầng nhập:** 311 test (translator, executor, engine-controller, phím chuyển, smart-switch,
+  bộ tự cập nhật — kể cả chạy thật script thay bundle trên bundle giả —, khôi phục theo từ điển — kể cả một bộ chạy trên `/usr/share/dict/words` thật, tự bỏ qua nếu máy không
   có file này).
-- **Tổng: 261 hàm test**, tất cả xanh.
+- **Tổng: 745 test** (`swift test list`), tất cả xanh; 2 "known issue" được ghi nhận có chủ đích (`room`/`door` gõ Telex ra âm tiết Việt hợp lệ).
 - **CI:** [`ci.yml`](.github/workflows/ci.yml) chạy `swift build && swift test` (toàn bộ suite) trên
   `macos-15` cho mỗi push & pull request.
 

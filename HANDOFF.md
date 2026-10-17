@@ -8,10 +8,10 @@ App **bộ gõ tiếng Việt mới hoàn toàn cho macOS 26/27**, thay thế Op
 ## Các quyết định đã chốt
 - **Hướng B:** engine tiếng Việt **viết mới từ đầu (clean-room)** — KHÔNG đọc/chép mã của OpenKey (OpenKey là GPLv3). Nhờ vậy app **thuộc bản quyền của bạn**, tự do chọn giấy phép (kể cả đóng/độc quyền).
 - **Tên:** **Keystone** · bundle id `com.tanta.keystone` (đổi được).
-- **Công nghệ:** **Swift thuần** cho tất cả (engine + tầng nhập + UI) · **SwiftUI** (phong cách macOS 27, Liquid Glass) · app menu-bar (LSUIElement) · target **macOS 26.0+** (dev trên 27).
+- **Công nghệ:** **Swift thuần** cho tất cả (engine + tầng nhập + UI) · **SwiftUI** (phong cách macOS 27, Liquid Glass) · app menu-bar (LSUIElement) · sàn triển khai **macOS 14.0+** (`Package.swift` `.macOS(.v14)` + `LSMinimumSystemVersion` 14.0 trong `App/Info.plist`; giao diện nhắm macOS 26/27, dev trên 27).
 - **Cơ chế nhập (v1):** **CGEventTap làm đúng cách** (tương thích mọi app). InputMethodKit để dành v2.
-- **Chính tả mặc định:** kiểu mới (oà, uý); kiểu cũ là tuỳ chọn.
-- **Phân phối:** Developer ID + notarize + DMG (không lên App Store được vì cần quyền Accessibility). Cập nhật: Sparkle (Phase 5).
+- **Chính tả mặc định:** bản đã phát hành mặc định **òa, úy** (`hòa`, `thủy`); **oà, uý** bật bằng tuỳ chọn "Đặt dấu oà, uý". (Spec ban đầu định mặc định oà, uý. Tên enum `.modern`/`.classic` trong code bị đặt ngược quy ước — xem DECISIONS.md "Orthography default".)
+- **Phân phối:** hiện tại **ký ad-hoc**, phát hành `Keystone.zip` + `Keystone.zip.sig` trên GitHub Releases bằng `Scripts/release.sh` (chưa có tài khoản Apple; đường Developer ID + notarize + DMG vẫn để sẵn script). Không lên App Store được vì cần quyền Accessibility. **Cập nhật:** bộ tự cập nhật riêng (không Sparkle), xác thực Ed25519 + kiểm phiên bản, thay bundle nguyên tử — xem `Scripts/README.md` và DECISIONS.md "Auto-update".
 - **Giao diện:** **mirror đúng bố cục OpenKey** (menu + Bảng điều khiển 4 tab: Cơ bản / Gõ tắt / Hệ thống / Thông tin) — xem Phần 2 của spec.
 
 ## ⚠️ Lỗi phải diệt (quan trọng nhất — xem Phần E của spec)
@@ -60,7 +60,8 @@ Mã nguồn OpenKey để tham chiếu (đọc để hiểu lỗi, KHÔNG chép)
   - ✅ **Phím chuyển** (`switchKeyModifier`) — tổ hợp phím (mặc định ⌃⇧, hoặc "Tắt") nhấn-thả sạch để bật/tắt tiếng Việt; `SwitchKeyDetector` thuần + NSEvent monitor **ngoài** hot-path tap. Chỉ báo **V/E** trên menu bar.
   - ✅ **Bỏ dấu tự do** (`allowFreeToneMark`) — cổng cho việc đặt dấu không sát chữ (mặc định BẬT = như cũ; TẮT = ép sát chữ).
   - ✅ **Gửi từng phím** (`sendEachKeystroke`) + **Sửa lỗi gợi ý** (`autoFixSuggestion`: gõ keyDown-only + `clearsInlineSuggestion` — ký tự đệm U+202F và Backspace thừa trước khi xoá, để gợi ý tự điền của omnibox không nuốt Backspace; tắt trong Terminal/Spotlight và không áp dụng khi phím Xoá lùi của người dùng chỉ xoá chữ (không đổi dấu); đánh đổi: ô tự xoá khoảng trắng có thể mất 1 chữ) — qua `InputBehavior` đẩy vào `EventTapController` (đọc snapshot 1 lần/edit). autoFixSuggestion mặc định TẮT (giữ nguyên hành vi tap, opt-in). [VERIFY] phần inline-autocomplete chưa thử trên Chrome thật.
-  - ⬜ **Còn (không chặn — vẫn scaffolding):** `checkForUpdates` (bộ kiểm tra thật — Phase 5/Sparkle); `spellCheck` (trùng ý với `restoreIfInvalid` sẵn có — cần chốt ngữ nghĩa trước khi nối kẻo thành no-op).
+  - ✅ **`checkForUpdates`** — đã nối (Phase 5, không dùng Sparkle): tự cập nhật từ GitHub Releases, xác thực Ed25519. Xem `DECISIONS.md` "Auto-update (Phase 5, no Apple account)".
+  - ✅ **`spellCheck`** — đã nối (Phase 7) thành *eager restore*: âm tiết "chết" hiện chữ thô ngay khi đang gõ, chặt hơn `restoreIfInvalid` (chỉ khôi phục ở ranh giới từ). Mặc định bật. Xem `DECISIONS.md` "Eager restore (spellCheck / Phase 7)".
 
 ## ⚠️ [VERIFY] Phase 2 — phải đo trên macOS thật (chưa test được ở đây)
 1. **Cấp quyền xong có cần khởi động lại app?** Nếu `AXIsProcessTrusted()` = true nhưng `CGEvent.tapCreate` vẫn nil → cần relaunch. App hiện log lỗi + poll; nên thêm nút "Khởi động lại" nếu gặp.
@@ -75,7 +76,7 @@ Mã nguồn OpenKey để tham chiếu (đọc để hiểu lỗi, KHÔNG chép)
 - Event tap **biến đổi** trên macOS 26/27 cần **Accessibility là đủ**, hay **cần thêm Input Monitoring**? (quyết định onboarding 1 hay 2 thẻ quyền)
 - Cấp quyền xong **có cần khởi động lại app** không?
 - App nào xử lý sai chuỗi Unicode nhiều ký tự (terminal/Electron/JetBrains) → cần fallback gõ từng grapheme.
-- Sàn triển khai macOS 26 với SDK đang cài (kiểm toolchain).
+- ~~Sàn triển khai macOS 26 với SDK đang cài~~ — đã chốt sàn **macOS 14** (xem dòng "Công nghệ" ở trên).
 - Bảng byte chuẩn cho TCVN3 / VNI-Windows / CP1258 (tự soạn + kiểm chứng).
 
 ## Câu hỏi mở còn để ngỏ (xem cuối spec)

@@ -1,7 +1,70 @@
 # Release scripts — runbook
 
+## How releases are actually cut today: `Scripts/release.sh`
+
+There is no Apple Developer account, so real releases (v1.1.x onwards) are
+**ad-hoc signed** and distributed as `Keystone.zip` + `Keystone.zip.sig` on
+GitHub Releases. The in-app updater (`App/Updater.swift`) consumes exactly that
+pair: it verifies the Ed25519 signature with the embedded public key, checks
+that the bundle inside is `com.tanta.keystone` at exactly the tagged version and
+newer than the running one, then swaps it in atomically (see DECISIONS.md
+"Auto-update", "Updater: atomic swap with rollback, and signed-downgrade
+rejection" and "Release script pre-flight checks").
+
+One-time setup on the release machine:
+
+- the Ed25519 **private** key at `~/.config/keystone/ed25519_private.b64`
+  (never in the repo; it must match `embeddedPublicKeyBase64` in
+  `App/Updater.swift`, and `release.sh` refuses to publish if it doesn't);
+- `gh` authenticated for `tanhattan0051/Keystone`;
+- Xcode command line tools (`swift`, `codesign`, `ditto`, PlistBuddy).
+
+Per release:
+
+```bash
+# 1. Everything committed and merged; the tree must be clean.
+git status
+
+# 2. Tag the exact commit you want to ship and push the tag.
+git tag v1.2.0
+git push origin v1.2.0
+
+# 3. Optional rehearsal: builds, signs, zips, signs the zip and verifies it
+#    against the embedded key, but publishes nothing.
+KEYSTONE_RELEASE_DRY_RUN=1 Scripts/release.sh 1.2.0
+
+# 4. The real thing.
+Scripts/release.sh 1.2.0
+```
+
+What `release.sh` checks, in order, and refuses to continue past:
+
+1. clean tree; local tag `v<version>` points at HEAD; the same tag exists on
+   `origin` at the same commit;
+2. the built `Info.plist` has `CFBundleShortVersionString == <version>` and
+   `CFBundleIdentifier == com.tanta.keystone`;
+3. codesign with Hardened Runtime (`--options runtime`, empty
+   `App/Keystone.entitlements`), `codesign --verify --deep --strict`, and the
+   `runtime` flag present;
+4. the zip's Ed25519 signature verifies against the public key embedded in
+   `App/Updater.swift` (`Scripts/verify_update.swift`);
+5. `gh release create --verify-tag`, so gh can never create the tag itself.
+
+Env knobs: `KEYSTONE_SIGN_IDENTITY` (default `-`, ad-hoc),
+`KEYSTONE_ED25519_KEY`, `KEYSTONE_REPO`, `KEYSTONE_RELEASE_DRY_RUN=1`. The
+release notes are generic Vietnamese text; edit them on GitHub afterwards if
+needed.
+
+Known limitation: an ad-hoc signature changes every build, so macOS treats each
+update as a new app for Accessibility. Users may have to re-grant
+Accessibility after an update (the Control Panel shows "cần khởi động lại" /
+the permission row when that happens).
+
+## Developer ID path (not used yet): build → sign → DMG → notarize
+
 Scaffolding for Phase 5 (Build & Distribution), per
-`docs/superpowers/specs/2026-09-16-keystone-design.md` Part D §3.
+`docs/superpowers/specs/2026-09-16-keystone-design.md` Part D §3. Everything
+below needs a paid Apple Developer account and has never been run.
 
 **Status: untested.** These scripts were written without a paid Apple
 Developer account, a Developer ID Application certificate, or notary
@@ -11,7 +74,7 @@ run a real signed build through them yet. Treat the first real run as a
 dry run: read the output carefully, and expect to iron out small issues
 (exact certificate name formatting, notarytool output wording, etc.).
 
-## Prerequisites (one-time, on the machine that will build releases)
+### Prerequisites (one-time, on the machine that will build releases)
 
 1. **A paid Apple Developer Program membership** (individual or
    organization). Free accounts cannot get a Developer ID certificate.
@@ -50,7 +113,7 @@ dry run: read the output carefully, and expect to iron out small issues
    plain `hdiutil`-built DMG if `create-dmg` isn't installed — functionally
    equivalent, just plainer.
 
-## Release order
+### Release order
 
 Run these from the repo root, in order. Each script fails loudly (missing
 env var, missing input file, verification failure) rather than silently
@@ -81,7 +144,7 @@ Scripts/notarize.sh dist/Keystone.dmg
 After step 4, `dist/Keystone.dmg` can be uploaded anywhere (GitHub Releases,
 a static host, etc.) and will pass Gatekeeper offline on a fresh Mac.
 
-## CI (`.github/workflows/release.yml`)
+### CI (`.github/workflows/release.yml`)
 
 Pushing a tag matching `v*` (e.g. `v1.0.0`) triggers `.github/workflows/release.yml`,
 which runs the same four scripts on a `macos-15` GitHub-hosted runner and
@@ -107,7 +170,10 @@ warning instead of failing:
 See the comment header at the top of `.github/workflows/release.yml` for
 the full list and how each one is used.
 
-## Sparkle (self-update) — not yet wired up
+## Sparkle (self-update) — not used
+
+Keystone ships its own updater instead (see the top of this file). The notes
+below are kept for reference only.
 
 The spec (Part D §3, "Self-update: Sparkle") calls for Sparkle 2 as a later
 addition, not part of Phase 5 scaffolding. When it's added:

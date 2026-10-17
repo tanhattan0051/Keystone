@@ -20,7 +20,7 @@
 | **Target** | **macOS 26.0+** (phát triển trên macOS 27) — *xác nhận lại theo SDK cài đặt* |
 | **Cơ chế nhập v1** | **CGEventTap làm đúng cách** (tương thích mọi app). InputMethodKit là hướng thay thế tương lai, không thuộc v1. |
 | **Phân phối** | Developer ID + notarize + **DMG** (app dạng event-tap **không** lên Mac App Store được vì sandbox). Cập nhật: Sparkle (Phase 5). |
-| **Chính tả mặc định** | **Kiểu mới (oà, uý)**; kiểu cũ (òa, úy) là tuỳ chọn. |
+| **Chính tả mặc định** | **Kiểu mới (oà, uý)**; kiểu cũ (òa, úy) là tuỳ chọn. *(Ghi chú 2026-10-17: bản đã phát hành mặc định là òa, úy; oà, uý bật bằng tuỳ chọn "Đặt dấu oà, uý". Tên enum trong code `.modern`/`.classic` bị đặt ngược quy ước — xem DECISIONS.md "Orthography default".)* |
 | **Bộ tính năng** | Ngang bằng OpenKey (xem Phần 2) |
 
 ### Lỗi của OpenKey mà Keystone phải diệt tận gốc (không được lặp lại)

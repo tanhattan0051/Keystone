@@ -9,6 +9,18 @@ the first vowel letter of certain open unmarked diphthongs/triphthongs).
 Classic placement (kiểu cũ: `hoà`, `thuỷ`) is opt-in via
 `EngineConfig(orthography: .classic)`.
 
+**Naming note (2026-10-17).** The enum names are the reverse of the usual
+Vietnamese convention. UniKey/OpenKey and the design spec call `oà`, `uý`
+"kiểu mới" (new style, tone on the main vowel) and `òa`, `úy` "kiểu cũ"
+(traditional). In this code `.modern` produces `hòa`/`thủy` (traditional) and
+`.classic` produces `hoà`/`thuỷ` (new style). The behaviour is consistent: the
+app default is `hòa`, and the Control Panel toggle reads "Đặt dấu oà, uý (thay
+vì òa, úy)", which is correct for what it does. Only the names are swapped. The
+spec's stated default ("kiểu mới (oà, uý)") was never what shipped. User-facing
+docs describe the behaviour (`hòa` by default, `hoà` opt-in) rather than the
+enum names. Renaming the cases would change persisted UserDefaults values, so it
+is left alone.
+
 ## `z` key semantics
 
 `z` removes the tone only. It does not strip quality marks (circumflex,
@@ -1943,7 +1955,10 @@ glue on top — `URLSession` fetches, `NSAlert` prompts, `Process` calls — and
 is not unit-tested headless, same reasoning as the CGEventTap itself.
 
 **Install: strip quarantine, then swap the bundle via a wait-for-exit
-relaunch helper.** Once the zip is verified, `Updater` writes it to a temp
+relaunch helper.** (Superseded 2026-10-17: the swap is now atomic with
+rollback, and the staged bundle's own version must equal the offered tag. See
+"Updater: atomic swap with rollback, and signed-downgrade rejection" below. The
+paragraph that follows describes the original v1.1.x behaviour.) Once the zip is verified, `Updater` writes it to a temp
 dir, extracts with `ditto -x -k` (via `Process`, failures surfaced, never
 swallowed), locates `Keystone.app` inside, and runs `xattr -dr
 com.apple.quarantine` on it. A running app bundle can't overwrite itself, so
@@ -3164,3 +3179,318 @@ what the cancel rule showed": natural +54 tokens (`carries` 34, `presses` 19, `e
 `cars`). The habit spelling of a common plural IS the natural spelling of another inflection
 (serries = serry + ies, charrs = charr + s), so keystrokes cannot tell them apart, and every suffix
 subset loses too. Reverted; `carries`/`presses`/`errs` stay known natural costs.
+
+## Updater: atomic swap with rollback, and signed-downgrade rejection
+
+Fixed 2026-10-17 after the v1.1.8 review.
+
+**Problem.** The relaunch script did `rm -rf <installed>; ditto <new>
+<installed>; open <installed>` with no error handling. If `ditto` failed (disk
+full, permissions, the staged dir removed by a temp cleaner) the user's only
+input method was deleted without a word. Separately, the Ed25519 signature
+proves only that a `Keystone.zip` was genuinely signed at some point. An old,
+genuinely signed zip served under a newer tag would have been installed: a
+downgrade to a build with known bugs.
+
+**Replay protection (`UpdateCheck.validateStagedBundle`, pure).** After the
+Ed25519 gate (unchanged, still first) and unzipping, the extracted bundle's
+`Contents/Info.plist` is read with `PropertyListSerialization` (`Bundle(url:)`
+caches) and checked in this order: `CFBundleIdentifier` equals our own (nil
+fails, fail-closed); `CFBundleShortVersionString` parses; it equals the version
+of the release we offered; it is newer than the running version. A replayed
+old zip under a new tag fails `versionMismatch`. Each failure carries a
+Vietnamese message for the alert. Then `codesign --verify --deep --strict` runs
+on the extracted app, then quarantine is stripped.
+
+**Pre-quit checks.** The installed bundle's parent folder must be writable, or
+the update stops with a "cập nhật thủ công" message before anything quits (this
+covers App Translocation and root-owned folders). `AppModel.quit()` is called
+only after the helper process has launched.
+
+**Swap script (`UpdateInstallScript.make`, pure builder).** The script lives in
+the per-update work dir (0700) and logs to `~/Library/Logs/Keystone/update.log`.
+It runs with `set -euo pipefail`:
+
+1. waits for Keystone's PID to exit, bounded (default 60 s; on timeout it
+   neither swaps nor relaunches, because the app is still running);
+2. `ditto`s the staged app to a sibling of the installed bundle
+   (`.Keystone-update-new-$$.app`); same directory means same volume, so the
+   final `mv` is an atomic rename;
+3. re-verifies that copy (`codesign --verify --deep --strict` plus PlistBuddy
+   reads of bundle id and short version). The staged dir lives in `$TMPDIR` and
+   could change between the Swift-side check and the script, so the copy that
+   will actually be installed is the one checked;
+4. `mv installed → .Keystone-update-old-$$.app`, `mv new → installed`, then
+   `rm -rf old` (a failure there is only logged).
+
+An EXIT trap restores the old bundle if it was moved aside and nothing sits at
+the installed path, removes a leftover new sibling, relaunches whatever is
+installed (the new app on success, the old one on failure), removes the work
+dir (staged app, zip and the script itself) and logs the exit code. The script
+never `rm -rf`s the installed path. Every interpolated value goes through
+`UpdateInstallScript.shellQuoted`.
+
+**Tests.** `UpdateInstallScriptTests` runs the generated script with real bash
+against ad-hoc-signed fake bundles: happy path, wrong version, wrong bundle id,
+missing staged app, a bundle tampered after signing, and a wait timeout. In
+every failure case the installed bundle is untouched and the old app is
+relaunched (except on timeout).
+
+**Off the main actor, with a real size cap.** `Updater` stays `@MainActor` but
+only does the alerts, the writability check, launching the script and quitting.
+Downloads, Ed25519 verification, extraction, the plist check, `codesign` and
+`xattr` run in a nonisolated pipeline; only Sendable values cross back. (The tap
+has its own thread, but the menu bar, Control Panel, switch-key monitors and AX
+focus tracking run on main and froze for seconds during an update.) Downloads
+use `URLSession.bytes(for:)`: a declared `Content-Length` over the cap is
+rejected before any body is read, and the body streams through the pure
+`CappedStreamWriter` (64 KB buffered writes into the work dir) which throws on
+the first byte past the cap, so at most the cap reaches disk and the partial
+file is removed. Caps: 64 MB for `Keystone.zip` (v1.1.8's is 1.8 MB), 1 KB for
+the signature. A first version used `download(for:delegate:)` with a progress
+delegate; the review showed that API never calls `didWriteData` on a task
+delegate, so that cap was dead code.
+
+**Script logging can't abort the swap.** The cleanup function and traps are
+installed before anything that can fail, and the log redirect falls back to
+`/dev/null` when `update.log` can't be opened (a directory, root-owned,
+immutable). A first version opened the log before installing the trap: an
+unopenable log aborted the script after Keystone had quit, with nothing swapped
+or relaunched. `UpdateInstallScriptTests` covers it with `update.log` as a
+directory.
+
+**Not verified on a device:** the full download → quit → swap → relaunch path.
+The swap now requires every release to carry a valid (at least ad-hoc) code
+signature seal; `Scripts/release.sh` guarantees that.
+
+## Release script pre-flight checks
+
+`Scripts/release.sh` publishes the artifact every installed copy updates from.
+A bad release cannot be recalled on machines we don't control, so the script
+fails before building or publishing anything questionable.
+
+- **Git preconditions, before the build.** Clean tree; a local tag `vX` whose
+  peeled commit equals HEAD; the same tag on `origin` at the same commit (read
+  with `git ls-remote --tags origin`, preferring the peeled `^{}` line so
+  annotated and lightweight tags both work). The uploaded zip is therefore
+  built from exactly the commit the tag names.
+- **`gh release create --verify-tag`**, so gh never creates the tag itself on
+  the remote default branch, which could differ from what was built.
+- **Bundle metadata.** The built `Info.plist` must have
+  `CFBundleShortVersionString` equal to the requested version and
+  `CFBundleIdentifier` equal to `com.tanta.keystone`. The updater now rejects a
+  bundle whose version differs from its tag, so a mismatch here would publish
+  an update nobody can install.
+- **Hardened Runtime.** `codesign --force --deep --options runtime
+  --entitlements App/Keystone.entitlements`, then `--verify --deep --strict`,
+  then an assertion that `codesign -dv` reports the `runtime` flag. This is
+  safe for an ad-hoc-signed Keystone: it links only Apple system frameworks, so
+  library validation is satisfied; the entitlements file is deliberately empty;
+  the event tap and AX need TCC grants, not entitlements. `App/Keystone.entitlements`
+  had `--options` inside an XML comment, which codesign's AMFI parser rejects
+  ("AMFIUnserializeXML: syntax error"); the comment was reworded. That bug would
+  also have broken `Scripts/sign.sh`.
+- **Embedded-key verification.** After signing the zip,
+  `Scripts/verify_update.swift` checks the signature against the public key
+  extracted from `embeddedPublicKeyBase64` in `App/Updater.swift` (exactly one
+  value, or abort). Signing with the wrong private key would make every
+  installed copy reject every later update; this makes that impossible to
+  publish.
+- **Dry run.** `KEYSTONE_RELEASE_DRY_RUN=1` runs everything except
+  `gh release create`, and downgrades the clean-tree and tag checks to
+  warnings, so build/sign/verify can be exercised on an untagged tree. A dry run
+  with a throwaway key was used to confirm the embedded-key check fails as it
+  should and that the built app carries `flags=0x10002(adhoc,runtime)`.
+
+## Macro import: real OpenKey format, merge by default, never clobber an unreadable file
+
+Fixed 2026-10-17 after the v1.1.8 review.
+
+**Why.** A real OpenKey export (`Macro.cpp::saveToFile` in tuyenvm/OpenKey) is
+the header `;Compatible OpenKey Macro Data file for UniKey*** version=1 ***`
+followed by one `name:content` line per macro, with no escaping. Keystone only
+parsed `trigger<TAB>replacement`, so a real export imported nothing. And any
+successful import replaced the user's whole list without asking.
+
+**Parsing (pure, `MacroTable`).** `parseOpenKey` mirrors OpenKey's
+`readFromFile`: split at the first `:`, skip lines without one, and when the
+name comes out empty re-split the content, so names that start with `:` work
+(`:D:smile` → `:D` / `smile`, `::x` → `:` / `x`). Empty content is allowed,
+empty names are skipped. One deliberate difference: OpenKey drops the first line
+unconditionally; Keystone drops it only if it starts with `;`, so a headerless
+colon list keeps its first macro. A BOM is stripped and lines split on the LF
+scalar (CRLF-safe). `detectTextFormat` picks OpenKey when the first line starts
+with `;`, TAB-separated when any line has a TAB, else headerless OpenKey.
+`parseLegacyText` dispatches; `parseTabSeparated` is unchanged.
+
+**Merge (pure, `MacroTable.rulesToAdd`).** Same as OpenKey's append mode: an
+existing trigger is kept, the first occurrence in the file wins, order and flags
+are preserved, empty triggers are dropped (not counted as duplicates). Imported
+macros always get fresh UUIDs, so re-importing our own JSON export can't create
+duplicate ids in the Table.
+
+**UI.** Parsing has no side effects and throws when it finds zero usable
+macros, so a bad file leaves the list untouched. With an empty list the import
+just adds. Otherwise an alert offers **Gộp** (default) / **Thay thế toàn bộ** /
+**Huỷ**, followed by a summary ("Đã thêm X, bỏ qua Y trùng"). Text is read as
+UTF-8, falling back to UTF-16 only when a UTF-16 BOM is present.
+
+**JSON vs text, and "nothing usable".** Tolerant decoding (below) means any
+JSON array of objects decodes, for example another tool's
+`[{"name":"vn","text":"Việt Nam"}]`, producing macros with empty triggers. A
+first version counted those, offered "Nhập N gõ tắt", and "Thay thế toàn bộ"
+then saved an empty list. The decision now lives in the pure layer:
+`MacroTable.importRules(from:decodeJSON:decodeText:)` decodes data that looks
+like JSON (`looksLikeJSON`: the first non-whitespace character after an optional
+BOM is `[` or `{`) only as JSON, so broken JSON surfaces its decode error instead
+of being text-parsed into junk triggers such as `[{"id"`; and it throws
+`noMacrosFound` when `usableRules` (non-empty trigger) is empty. The prompt shows
+the de-duplicated usable count, and a replace with an empty set is a no-op.
+When "+" adds a row the search query is cleared so the new row is visible, and
+"−" is disabled when no selected row is visible. Within an imported file a
+repeated trigger keeps its *last enabled* occurrence (at the first occurrence's
+position; the first one if none is enabled). That mirrors `MacroTable.init`,
+which fires the last enabled rule, so the macro that fires before an export is
+the one that survives a re-import; a test compares the two tables directly.
+(Two earlier versions kept the first occurrence, then the first enabled one;
+both let a round trip change which expansion fires.) `looksLikeJSON` is
+deliberately narrower than "starts with `[` or `{`": `[` must be followed by
+`{`, `]` or the end, `{` by `"` or `}`, so legacy text files whose first trigger
+is `[c]`, `{tm}` or OpenKey's `{:}` still import as text. A JSON decode error is
+shown as "Tệp JSON bị lỗi định dạng: …".
+
+**Storage safety.** `Macro` decodes tolerantly (`decodeIfPresent` with the
+property defaults; a missing id gets a new UUID); explicit CodingKeys keep the
+encoded form identical. If an existing `macros.json` can't be read or decoded,
+`load()` copies it (never moves or deletes it) to
+`macros.json.unreadable-<yyyyMMdd-HHmmss>` and logs the path. If the copy
+succeeded, saving continues (the data lives on in the backup). If the copy
+failed, `save()` refuses to write and logs each skipped write, so the original
+is never overwritten. `loadIssue` shows a warning banner in the Gõ tắt window.
+
+## Switch-key recorder never leaves the engine suspended
+
+Fixed 2026-10-17 after the v1.1.8 review.
+
+Recording the "Phím kèm:" key calls `beginSwitchKeyRecording()`, which turns the
+engine off for every app while the menu bar still shows "V" (`enabled` is
+untouched). Recording used to end only on the next keyDown inside the Control
+Panel or on `onDisappear`, so clicking into another app left Vietnamese typing
+silently dead system-wide.
+
+Now recording also ends when the recording window resigns key or the app
+resigns active, and `startRecordingKey` refuses to start without a key window.
+`stopRecordingKey` is idempotent and every exit path goes through it, so the
+engine is restored exactly once per begin.
+
+The per-keyDown decision is pure,
+`SwitchKeyRecorder.action(keyCode:modifiers:comboModifiers:)`: Escape → cancel
+and consume (it wins over everything: it is the documented cancel key and never
+a valid hot key). An event with ⌘ when the combo's checkboxes do NOT include ⌘
+→ cancel and pass the event through, so ⌘W / ⌘Q / ⌘, keep working. An event
+with ⌘ when the combo DOES include ⌘ → record the key: the user is pressing
+their own chord (⌘⇧K), as in any shortcut recorder. A first version cancelled
+on every ⌘ event, which silently broke exactly that case (it worked in v1.1.8);
+the review caught it. Anything else → record. While recording, the button shows
+an "Esc để huỷ" caption, and the switch key itself is ignored
+(`isRecordingSwitchKey`): pressing the applied combo used to toggle `enabled`,
+whose `didSet` turned the engine back on mid-recording, so the next key was
+re-synthesized as keyCode 0 and recorded wrongly. Not verified on a device: the resign-key /
+resign-active paths.
+
+## AX focus change keeps a word typed in the new target
+
+Fixed 2026-10-17 after the v1.1.8 review.
+
+The AX focus re-check is triggered by the first keystroke the switch-key
+monitors see in the new target (for example right after F1 hides iTerm2's
+floating hotkey panel). By then the tap, on its own thread, has usually fed that
+key to the engine already. The unconditional `resetBuffer()` in
+`keyFocusTracker.onFocus` threw it away: Telex `ddi` ("đi") came out as `d` +
+`di`.
+
+Now `AppModel` keeps a pure `WordStartTracker` (KeystoneInput,
+`FocusResetPolicy.swift`) fed from both monitors with `NSEvent.timestamp`:
+keyDowns go through `FocusResetPolicy.classify` (letters, digits, `[`, `]` are
+word keys; space, punctuation, Return/Tab/Esc/arrows and ⌘/⌃/⌥ chords are
+boundaries; Backspace and function keys are neutral), mouse-downs are
+boundaries. `focusTriggerTime` is the first monitored event since the last
+completed AX refresh (set only when tracking is on, cleared by both tracker
+callbacks). On a focus change the buffer is reset only if
+`FocusResetPolicy.shouldResetOnFocusChange` says the word began before that
+trigger. The activation path (`handleAppActivation`) still resets
+unconditionally.
+
+Why it is safe: what the monitors see is either the real key (engine off) or
+Keystone's synthetic output for it, which always comes right after the real
+key. So the estimated word start is never later than the engine's real one, and
+counting digits/brackets as word keys for every input method only moves it
+earlier. An earlier estimate means more resets, never fewer. The residual risk,
+accepted: a word begun in the old target within one refresh window (0.1 s,
+`RefreshThrottle`) right before focus moved survives into the new target.
+Not verified on a device.
+
+## Vietnamese on/off persists; the launch app joins per-app memory
+
+`enabled` is persisted under `settings.enabled` (default on). It is not part of
+"Mặc định" (`resetToDefaults`), which resets settings, not the V/E state. The
+loaded value reaches the engine through `startTap()`'s `controller.setActive`.
+At bootstrap `currentBundleID` is seeded with the frontmost app (unless it is
+Keystone), and when per-app memory is on and something was remembered for that
+app it is applied through the same `SmartSwitch.resolve` path as an activation
+(`applyRememberedState(for:)`). Otherwise the persisted global state would beat
+the per-app memory for the launch app until the first app switch.
+
+## Switch key right after Cmd-Tab is credited to the right app
+
+`NSWorkspace.didActivateApplicationNotification` can arrive after a quick ⌘Tab
+followed by the switch key, so the toggle was learned for the app just left
+(and the late notification saved it for that app again). 
+`toggleVietnameseFromHotKey` now reads `NSWorkspace.frontmostApplication`; if it
+is a real other app that differs from `currentBundleID`, it runs
+`handleAppActivation` first. The late notification for the same app is then a
+no-op: it saves the current state under the now-correct id and restores the
+same state.
+
+## Relaunch waits for the old instance's lock
+
+`relaunch()` starts the new process and terminates; the child's
+`SingleInstance.acquire()` could run before the parent released its flock, so
+the child said "Keystone đã đang chạy" and quit, leaving no input method at all.
+`relaunch()` now sets `KEYSTONE_RELAUNCHED=1` in the child's environment (an
+environment variable rather than an argument, because AppKit reads `-key value`
+arguments as UserDefaults overrides). With the marker the child retries
+`acquire` every 100 ms for up to 2 s; without it a genuine second copy still
+bows out at once.
+
+## Macro trigger validation and list fixes
+
+The engine matches macros against the raw keys of one word, so a trigger with a
+character the engine never accumulates can never fire, and the editor used to
+accept it silently (`đc`, `k2` in Telex, `a.b`). `MacroTable.triggerProblem`
+(pure) reports: empty, whitespace, a non-ASCII letter (usually not a raw key:
+type `ddc`, not `đc`; on layouts that type the letter directly the warning can
+be ignored), or a boundary character for the current input method (word
+characters mirror `Engine.isWordChar`: letters, plus digits for VNI, plus `[`
+`]` otherwise). Because this duplicates a private engine rule,
+`MacroTriggerValidationTests` drives a real `Engine` for all four input methods
+and asserts a macro fires exactly when `triggerProblem` returns nil. The editor
+shows the problem under the trigger field and the table marks the row; saving is
+never blocked.
+
+List fixes: "−" deletes only rows that are selected and visible under the
+current search; `MacroStore.binding(for:)` re-resolves the row by id on every
+access instead of capturing an index (a stale index crashed or edited the wrong
+row after the list shrank or reordered).
+
+## Simple Telex 1/2 caption, pinned release action
+
+Simple Telex 1 and 2 are offered in the pickers but no engine code branches on
+them; they behave exactly like Telex. The pickers now label them "(đang chạy như
+Telex)" and the Control Panel shows the same caption under the picker
+(`InputMethod.behavesAsTelex` / `displayCaption` in `EngineTypeDisplay.swift`).
+
+`.github/workflows/release.yml` pins `softprops/action-gh-release` to commit
+`3bb12739c298aeb8a4eeaf626c5b8d85266b0e65` (v2.6.2) instead of the mutable `@v2`
+tag, since the action receives the repository token.
+

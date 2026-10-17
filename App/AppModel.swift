@@ -15,9 +15,11 @@
 //    additionally masked off while the app accepting keyboard input is a
 //    terminal emulator (see `keyFocusAppIsTerminal` and DECISIONS.md "Không
 //    tự viết hoa trong Terminal").
-//  - Everything else is scaffolding: real UI, real persistence, but no
-//    engine behavior yet (`EngineConfig` doesn't have a field for it). Each
-//    one is marked `// TODO: wire to engine`.
+//  - The rest are persisted app-level behaviors that don't go through
+//    `EngineConfig`: smartSwitch/rememberCodePerApp (per-app state, see
+//    `handleAppActivation`), autoFixSuggestion/sendEachKeystroke (pushed via
+//    `pushInputBehavior`), the switch key, login item, Dock icon, update
+//    check and window-at-launch options.
 //  - `useLexicon` is neither: real engine behavior (gates
 //    `EngineController.setLexicon`, alongside `restoreIfInvalid`), but
 //    deliberately NOT pushed through `EngineConfig` — see `Engine.lexicon`'s
@@ -32,7 +34,7 @@ import ServiceManagement
 import KeystoneEngine
 import KeystoneInput
 
-private extension ModifierSet {
+extension ModifierSet {
     /// Maps AppKit's modifier flags to the platform-neutral `ModifierSet`
     /// that `SwitchKeyDetector` (KeystoneInput) works with.
     init(nsEventFlags flags: NSEvent.ModifierFlags) {
@@ -52,8 +54,14 @@ final class AppModel {
 
     // MARK: - Enable / input method (existing, tap-wired)
 
-    var enabled = true {
+    /// Vietnamese on/off, persisted so a relaunch (or login) resumes in the
+    /// state the user left. The property initializer does not run `didSet`, and
+    /// `pushConfig()` builds only an `EngineConfig` (no active flag): the
+    /// loaded value reaches the engine via `startTap()`'s
+    /// `controller.setActive(enabled)` and the per-app restore at bootstrap.
+    var enabled: Bool = AppModel.loadBool(Keys.enabled, default: true) {
         didSet {
+            UserDefaults.standard.set(enabled, forKey: Keys.enabled)
             controller.setActive(enabled)
             persistPerAppStateIfNeeded()
         }
@@ -175,9 +183,10 @@ final class AppModel {
     /// `mama`→mâm) — the engine cannot tell it apart from `tana`→tân without a
     /// dictionary. The clean way to keep BOTH (free-mark style AND `hehe`
     /// literal) is to re-enable `restoreIfInvalid`, which reverts the invalid
-    /// `hêh` back to raw `hehe`; that path is currently off pending the
-    /// event-tap duplicate-keydown fix (see DECISIONS.md). `EngineConfig`
-    /// still defaults it false so the corpus keeps the English-safe behavior.
+    /// `hêh` back to raw `hehe`; that path is back ON by default (see
+    /// DECISIONS.md "restoreIfInvalid back ON (after the duplicate-key-down
+    /// fix)"). `EngineConfig` still defaults `freeMarkAcrossCoda` false so
+    /// the corpus keeps the English-safe behavior.
     var freeMarkAcrossCoda: Bool = AppModel.loadBool(Keys.freeMarkAcrossCoda, default: true) {
         didSet {
             UserDefaults.standard.set(freeMarkAcrossCoda, forKey: Keys.freeMarkAcrossCoda)
@@ -223,7 +232,7 @@ final class AppModel {
         }
     }
 
-    // MARK: - Scaffolding — persisted, displayed, not yet in EngineConfig
+    // MARK: - Capitalization & quick consonants (pushed into EngineConfig)
 
     /// "Viết Hoa chữ cái đầu câu". Default OFF — sentence-start detection in
     /// a system-wide IME is unreliable (see DECISIONS.md "Quick consonants &
@@ -251,14 +260,16 @@ final class AppModel {
         }
     }
 
-    /// "Chuyển chế độ thông minh" (smart switch on app change)
-    // TODO: wire to engine/input layer (design spec Part B/C, E.7).
+    // MARK: - Per-app memory & input behavior (not in EngineConfig)
+
+    /// "Chuyển chế độ thông minh" (smart switch on app change) — wired via
+    /// `handleAppActivation` / `PerAppStore` (design spec E.7).
     var smartSwitch: Bool = AppModel.loadBool(Keys.smartSwitch, default: true) {
         didSet { UserDefaults.standard.set(smartSwitch, forKey: Keys.smartSwitch) }
     }
 
-    /// "Tự ghi nhớ bảng mã theo ứng dụng"
-    // TODO: wire to engine/input layer (per-bundle-id remembered code table).
+    /// "Tự ghi nhớ bảng mã theo ứng dụng" — wired via `handleAppActivation` /
+    /// `PerAppStore` (remembered code table per bundle id).
     var rememberCodePerApp: Bool = AppModel.loadBool(Keys.rememberCodePerApp, default: true) {
         didSet { UserDefaults.standard.set(rememberCodePerApp, forKey: Keys.rememberCodePerApp) }
     }
@@ -440,7 +451,7 @@ final class AppModel {
     /// macOS Secure Input is on system-wide, so the tap receives NO keystrokes
     /// and Vietnamese can't work in any app until its holder leaves the
     /// field/tab. Mirrors `secureInputTracker` for the UI; polled by
-    /// `refreshSecureInput()`. Lives here, not in the tap's `SystemStateCache`,
+    /// `refreshSecureInput()`. Lives here, not in any tap-side state,
     /// because a blind tap can't be the one to report it. See DECISIONS.md
     /// "Secure Input: phát hiện và báo".
     private(set) var secureInputActive = false
@@ -532,6 +543,15 @@ final class AppModel {
     /// itself in the middle of applying.
     private var applyingPerAppState = false
 
+    /// Estimate of when the engine's current word began, fed by every
+    /// monitored key/click (see `handleMonitoredInput`). Used only to decide
+    /// whether an AX focus change may reset the buffer — see FocusResetPolicy.
+    private var wordStartTracker = WordStartTracker()
+    /// Timestamp of the FIRST monitored event since the last completed AX
+    /// refresh — the event whose keystroke may already be in the engine when
+    /// the refresh reports a new focus. Cleared by both tracker callbacks.
+    private var focusTriggerTime: TimeInterval?
+
     /// Either per-app toggle being on means the app-activation handler needs
     /// to track per-app state at all (E.7 covers both independently).
     private var perAppTrackingOn: Bool { smartSwitch || rememberCodePerApp }
@@ -615,6 +635,7 @@ final class AppModel {
         // the fix ON inside it; its mask holds only while AX reads succeed.
         // Accepted: a gate stuck OFF in Chrome is the reported bug.
         keyFocusTracker.onFocusUnknown = { [weak self] in
+            self?.focusTriggerTime = nil
             self?.updateKeyFocusAppAllowsSuggestionFix(
                 bundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
         }
@@ -629,10 +650,25 @@ final class AppModel {
             // panel case) gets the exact same reset semantics as an
             // activation — and, like the async activation notification, it
             // can land after the first keystroke in the new target.
+            //
+            // The refresh is triggered by the first keystroke into the new
+            // target, and the tap has usually fed that keystroke to the engine
+            // already — resetting would drop the "đ" of "ddi". Reset only when
+            // the word began before the triggering event (FocusResetPolicy).
             if bundleID != self.keyFocusBundleID {
-                self.controller.resetBuffer()
+                if FocusResetPolicy.shouldResetOnFocusChange(
+                    currentWordStart: self.wordStartTracker.currentWordStart,
+                    triggerTime: self.focusTriggerTime
+                ) {
+                    self.controller.resetBuffer()
+                    self.wordStartTracker.reset()
+                } else {
+                    // No typed text in the log, only the decision.
+                    Self.log.debug("focus change: buffer reset skipped, word began in the new target")
+                }
                 self.keyFocusBundleID = bundleID
             }
+            self.focusTriggerTime = nil
             self.updateKeyFocusAppIsTerminal(bundleID: bundleID)
             self.updateKeyFocusAppAllowsSuggestionFix(bundleID: bundleID)
         }
@@ -651,12 +687,22 @@ final class AppModel {
         keyFocusBundleID = launchBundleID
         updateKeyFocusAppIsTerminal(bundleID: launchBundleID)
         updateKeyFocusAppAllowsSuggestionFix(bundleID: launchBundleID)
+        // Same for per-app memory: no activation fires for the app already in
+        // front, so seed currentBundleID too — a V/E toggle made there is then
+        // remembered for it like for any other app. We also APPLY what was
+        // remembered for it (same path as an activation); otherwise the
+        // persisted global `enabled` would win over the per-app memory until
+        // the first app switch.
+        if let launchBundleID, launchBundleID != Bundle.main.bundleIdentifier {
+            currentBundleID = launchBundleID
+            if perAppTrackingOn { applyRememberedState(for: launchBundleID) }
+        }
         // A floating panel that's ALREADY the one accepting keyboard input
         // at launch (e.g. iTerm2's hotkey window, summoned before Keystone
         // even started) never fires an activation notification either — the
         // AX read below is what actually catches that case; the NSWorkspace
         // seed above is only ever the cheap fast-path.
-        requestKeyFocusRefresh()
+        requestKeyFocusRefresh(eventTime: nil)
         // Reset the composing buffer when the frontmost app changes, and (when
         // smart-switch and/or per-app code table is on) learn/restore that
         // app's input state — all off the hot path (E.7 / §7.1), since this
@@ -766,6 +812,11 @@ final class AppModel {
         let path = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])
         let proc = Process()
         proc.executableURL = path
+        // Tell the child it is a relaunch so its SingleInstance check waits for
+        // this process to release the lock instead of bowing out (no IME at all).
+        var environment = ProcessInfo.processInfo.environment
+        environment[SingleInstance.relaunchMarkerKey] = "1"
+        proc.environment = environment
         do {
             try proc.run()
         } catch {
@@ -785,7 +836,7 @@ final class AppModel {
 
     func quit() { shutdown(); NSApp.terminate(nil) }
 
-    /// "Mặc định" — reset every setting (mapped + scaffolding) to its default.
+    /// "Mặc định" — reset every setting to its default. (`enabled`, the V/E state, is not a setting here.)
     func resetToDefaults() {
         inputMethod = .telex
         codeTable = .unicode
@@ -883,8 +934,13 @@ final class AppModel {
     /// switch-key global-monitor input event (`installSwitchKeyMonitors()`)
     /// and once at bootstrap — see DECISIONS.md "Floating panels follow
     /// keyboard focus, not activation".
-    private func requestKeyFocusRefresh() {
+    /// `eventTime` is the triggering monitor event's timestamp (nil at
+    /// bootstrap); only the first one since the last completed refresh is
+    /// kept as `focusTriggerTime`. Set after the gate so a skipped request
+    /// never leaves a stale trigger behind.
+    private func requestKeyFocusRefresh(eventTime: TimeInterval?) {
         guard needsKeyFocusTracking else { return }
+        if focusTriggerTime == nil { focusTriggerTime = eventTime }
         keyFocusTracker.requestRefresh()
     }
 
@@ -900,6 +956,7 @@ final class AppModel {
     private func handleAppActivation(newBundleID: String?) {
         refreshSecureInput()
         controller.resetBuffer()
+        wordStartTracker.reset()
         keyFocusBundleID = newBundleID
         updateKeyFocusAppIsTerminal(bundleID: newBundleID)
         updateKeyFocusAppAllowsSuggestionFix(bundleID: newBundleID)
@@ -921,8 +978,13 @@ final class AppModel {
             PerAppStore.shared.remember(currentInputState, for: oldBundleID)
         }
         currentBundleID = newBundleID
+        applyRememberedState(for: newBundleID)
+    }
 
-        guard let remembered = PerAppStore.shared.state(for: newBundleID) else { return }
+    /// Restores what was learned for `bundleID` (if anything) onto `enabled`
+    /// and `codeTable`, via `SmartSwitch.resolve`, without re-learning it.
+    private func applyRememberedState(for bundleID: String) {
+        guard let remembered = PerAppStore.shared.state(for: bundleID) else { return }
         let resolved = SmartSwitch.resolve(
             remembered: remembered,
             current: currentInputState,
@@ -971,22 +1033,20 @@ final class AppModel {
         // and fire a spurious toggle. NSEvent isn't Sendable, so pull the
         // plain data out before touching the main-actor detector.
         switchKeyGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: Self.switchKeyMonitoredEvents) { [weak self] event in
-            let type = event.type
-            let modifiers = ModifierSet(nsEventFlags: event.modifierFlags)
+            let input = MonitoredInput(event)
             MainActor.assumeIsolated {
-                self?.handleSwitchKeyEvent(type: type, modifiers: modifiers)
+                self?.handleMonitoredInput(input)
                 // Every keystroke/click delivered to ANOTHER app is also a
                 // signal that key focus may have moved — including into a
                 // non-activating floating panel that never fires
                 // NSWorkspace.didActivateApplicationNotification.
-                self?.requestKeyFocusRefresh()
+                self?.requestKeyFocusRefresh(eventTime: input.time)
             }
         }
         switchKeyLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: Self.switchKeyMonitoredEvents) { [weak self] event in
-            let type = event.type
-            let modifiers = ModifierSet(nsEventFlags: event.modifierFlags)
+            let input = MonitoredInput(event)
             MainActor.assumeIsolated {
-                self?.handleSwitchKeyEvent(type: type, modifiers: modifiers)
+                self?.handleMonitoredInput(input)
                 // A non-activating floating panel can take key focus while
                 // Keystone itself is still the active app — clicking back
                 // into one of Keystone's OWN windows fires no activation
@@ -995,10 +1055,50 @@ final class AppModel {
                 // stuck on whatever last had AX focus. The AX read landing
                 // on Keystone's own element is safe here: it still runs on
                 // the main thread (see KeyFocusTracker).
-                self?.requestKeyFocusRefresh()
+                self?.requestKeyFocusRefresh(eventTime: input.time)
             }
             return event
         }
+    }
+
+    /// Plain-value snapshot of a monitored NSEvent (NSEvent isn't Sendable, and
+    /// the monitors must pull data out before `MainActor.assumeIsolated`).
+    /// `characters` is NSEvent.characters (valid for keyDown only, so empty
+    /// otherwise): the typed text with Shift applied, which is what the
+    /// word-key test needs ("!" is a boundary, "1" a word key), and it matches
+    /// what the engine's tap sees. `time` is NSEvent.timestamp (systemUptime
+    /// clock).
+    private struct MonitoredInput: Sendable {
+        let type: NSEvent.EventType
+        let modifiers: ModifierSet
+        let keyCode: UInt16
+        let characters: String
+        let time: TimeInterval
+
+        init(_ event: NSEvent) {
+            type = event.type
+            modifiers = ModifierSet(nsEventFlags: event.modifierFlags)
+            let isKeyDown = event.type == .keyDown
+            keyCode = isKeyDown ? event.keyCode : 0
+            characters = isKeyDown ? (event.characters ?? "") : ""
+            time = event.timestamp
+        }
+    }
+
+    /// Feeds the word-start estimate, then the switch-key detector.
+    @MainActor
+    private func handleMonitoredInput(_ input: MonitoredInput) {
+        switch input.type {
+        case .keyDown:
+            let kind = FocusResetPolicy.classify(
+                keyCode: input.keyCode, characters: input.characters, modifiers: input.modifiers)
+            wordStartTracker.record(kind, at: input.time)
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            wordStartTracker.record(.boundary, at: input.time)
+        default:
+            break   // flagsChanged: a bare modifier neither starts nor ends a word
+        }
+        handleSwitchKeyEvent(type: input.type, modifiers: input.modifiers)
     }
 
     /// Shared handler for both "Phím chuyển" monitors: feeds `switchDetector`
@@ -1041,9 +1141,31 @@ final class AppModel {
             Self.log.info("switch key ignored: Secure Input is on")
             return
         }
+        // The recorder suspended the engine; toggling `enabled` here would run
+        // `enabled.didSet` -> `setActive(enabled)` and turn it back on
+        // mid-recording, so the next key is re-synthesized as keyCode 0.
+        guard !isRecordingSwitchKey else {
+            Self.log.info("switch key ignored: the switch-key recorder is armed")
+            return
+        }
+        // The activation notification can arrive AFTER a quick ⌘Tab + switch
+        // key, leaving `currentBundleID` on the app we just left: the toggle
+        // would be learned for the wrong app, and the late notification would
+        // save it for the old app again. Catch the pending switch up first.
+        // The late notification for the same app is then harmless: it saves
+        // the current state for the (now correct) currentBundleID, then
+        // restores that same state — a no-op.
+        if let frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+           frontmost != Bundle.main.bundleIdentifier,
+           frontmost != currentBundleID {
+            handleAppActivation(newBundleID: frontmost)
+        }
         enabled.toggle()
         if switchKeyBeep { NSSound.beep() }
     }
+
+    /// True between begin/endSwitchKeyRecording; see toggleVietnameseFromHotKey.
+    private var isRecordingSwitchKey = false
 
     /// Suspends the tap's Vietnamese engine WITHOUT touching `enabled` (the
     /// persisted, user-facing toggle) — call while the "Phím kèm:" recorder
@@ -1058,6 +1180,7 @@ final class AppModel {
     /// recorder always sees the real keyCode/characters. See DECISIONS.md
     /// "Phím chuyển".
     func beginSwitchKeyRecording() {
+        isRecordingSwitchKey = true
         controller.setActive(false)
     }
 
@@ -1065,6 +1188,7 @@ final class AppModel {
     /// unconditionally `true`) once the recorder has captured a key or been
     /// cancelled — pairs with `beginSwitchKeyRecording()`.
     func endSwitchKeyRecording() {
+        isRecordingSwitchKey = false
         controller.setActive(enabled)
     }
 
@@ -1221,6 +1345,7 @@ final class AppModel {
     // MARK: - UserDefaults persistence
 
     private enum Keys {
+        static let enabled = "settings.enabled"
         static let inputMethod = "settings.inputMethod"
         static let codeTable = "settings.codeTable"
         static let orthography = "settings.orthography"

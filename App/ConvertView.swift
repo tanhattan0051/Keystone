@@ -1,10 +1,11 @@
 // ConvertView.swift — "Công cụ chuyển mã" (design spec Part 2 §2.3 / Part C §4).
 //
-// Converts between code tables and applies a case transform. The engine does
-// not expose a public `Converter` yet (KeystoneEngine only has `.unicode`
-// today — see HANDOFF.md Phase 3), so code-table remapping is stubbed behind
-// `ConvertBridge` below with a TODO; the case transform is real, local Swift
-// string work and needs no engine support.
+// Converts between code tables and applies a case transform. Both go through
+// `ConvertBridge` below, which calls `KeystoneEngine.Converter.convert` — the
+// same OutputTable live typing uses. Supported source tables: Unicode, Unicode
+// compound and CP1258; any target table is supported. Converting FROM TCVN3 or
+// VNI Windows has no confident inverse map yet, so `Converter` returns the
+// input unchanged for those two (see Converter.swift).
 
 import SwiftUI
 import AppKit

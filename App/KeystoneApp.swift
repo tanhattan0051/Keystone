@@ -90,7 +90,12 @@ private struct MenuBarLabel: View {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // One Keystone per user — a second copy would double-tap every key.
-        guard SingleInstance.acquire() else {
+        // A relaunched child may start before its parent has released the lock,
+        // so it waits up to 2 s for it; a plain second copy bows out at once.
+        let isOnlyInstance = SingleInstance.launchedByRelaunch
+            ? SingleInstance.acquire(retryingFor: 2)
+            : SingleInstance.acquire()
+        guard isOnlyInstance else {
             let alert = NSAlert()
             alert.messageText = "Keystone đã đang chạy"
             alert.informativeText = "Đã có một bản Keystone đang chạy trên tài khoản này. "

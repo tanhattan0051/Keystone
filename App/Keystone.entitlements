@@ -8,7 +8,7 @@
 
   Why this file is (almost) empty:
 
-  - Hardened Runtime is turned on at the `codesign --options runtime` call
+  - Hardened Runtime is turned on at the `codesign` call that passes the "runtime" option
     (see Scripts/sign.sh), not by anything in here. This file only grants
     EXCEPTIONS to the hardened-runtime defaults, and Keystone needs none.
 
