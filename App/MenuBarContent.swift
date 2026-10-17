@@ -15,7 +15,7 @@ struct MenuBarContent: View {
                 .disabled(!model.accessibilityTrusted)
 
             Picker("Kiểu gõ", selection: $model.inputMethod) {
-                ForEach(InputMethod.allCases) { Text($0.displayName).tag($0) }
+                ForEach(InputMethod.allCases) { Text($0.pickerLabel).tag($0) }
             }
 
             Divider()
