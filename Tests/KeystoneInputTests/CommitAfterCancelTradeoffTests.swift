@@ -15,14 +15,8 @@ import Testing
 struct KnownRegressionsOfCommitAfterCancelTests {
     @Test func outOfDictionaryRawWordsCommitTheScreen() {
         #expect(typeShipped("troff") == "trof ")
+        #expect(typeShipped("purrs") == "purs ")
         #expect(typeShipped("bitss") == "bits ")
         #expect(typeShipped("keyss") == "keys ")
-    }
-
-    /// `purrs` used to be listed above: it was the same regular-inflection bug as
-    /// `carries` (purr + s, the stem is a word), and is fixed by
-    /// `Lexicon.containsWordOrRegularInflection`.
-    @Test func regularInflectionOfAWordKeepsTheRaw() {
-        #expect(typeShipped("purrs") == "purrs ")
     }
 }

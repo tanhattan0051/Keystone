@@ -80,60 +80,6 @@ public struct Lexicon: Sendable {
         words.contains(word.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
     }
 
-    /// True iff the lowercased `word` is in the lexicon, or is a REGULAR
-    /// inflection of a word that is: `-ies` (carries -> carry), `-es` after
-    /// s/x/z/ch/sh/o (presses -> press), `-s` after anything else (errs -> err).
-    ///
-    /// Deliberately NO `-ed`/`-ing` rule: the OpenKey habit spells `need` as
-    /// `neeed` (nee + ed), `based` as `bassed` (bass + ed), `losing` as `lossing`
-    /// (loss + ing), so such a rule made the raw habit spelling win. Measured:
-    /// it broke ~76 habit words (need and based are the most frequent in prose)
-    /// and fixed no real word in natural typing.
-    ///
-    /// WHY. The system list is Webster 1934 and lacks most inflections. The
-    /// cancel decision asks "is a raw spelling a word?", and for `carries` (the
-    /// second `r` cancels the tone key) the answer was no while the one-letter
-    /// shorter composed `caries` IS a word, so Space rewrote what the user
-    /// typed. A regular inflection of a known word is as good a witness as the
-    /// word itself.
-    ///
-    /// The `-s` exclusion is load-bearing: a stem ending in s/x/z/ch/sh takes
-    /// `-es`, never a bare `-s`, so `classs`, `passs`, `keyss`, `iss`, `hass`
-    /// (the OpenKey habit of one extra tone-cancelling key) are NOT inflections
-    /// and still cancel.
-    public func containsWordOrRegularInflection(_ word: String) -> Bool {
-        let lowered = word.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if words.contains(lowered) { return true }
-        return Self.regularStems(of: lowered).contains { words.contains($0) }
-    }
-
-    /// Every stem `word` could be a regular inflection of (see
-    /// `containsWordOrRegularInflection`); most are not words, the caller
-    /// filters. Pure string work.
-    private static func regularStems(of word: String) -> [String] {
-        var stems: [String] = []
-        if word.hasSuffix("ies") {
-            stems.append(String(word.dropLast(3)) + "y")
-        }
-        if word.hasSuffix("es") {
-            let stem = String(word.dropLast(2))
-            if endsInSibilantOrO(stem) { stems.append(stem) }
-        }
-        if word.hasSuffix("s") {
-            let stem = String(word.dropLast(1))
-            if !endsInSibilant(stem) { stems.append(stem) }
-        }
-        return stems
-    }
-
-    private static func endsInSibilant(_ stem: String) -> Bool {
-        ["s", "x", "z", "ch", "sh"].contains { stem.hasSuffix($0) }
-    }
-
-    private static func endsInSibilantOrO(_ stem: String) -> Bool {
-        endsInSibilant(stem) || stem.hasSuffix("o")
-    }
-
     public var count: Int { words.count }
 
     // MARK: - Prefix index
@@ -277,8 +223,7 @@ public enum RestoreDecision {
     /// real words (`lesskey`, `onerror`, `nonbootable`, ...): a natural double
     /// letter whose composed form happens to keep matching the dictionary one
     /// letter longer. Adding -s/-ed/-es stem rules instead broke the habit case
-    /// (`thiss` read as `this` + `s`; `containsWordOrRegularInflection` avoids that
-    /// only because its bare `-s` rule excludes stems ending in s/x/z/ch/sh). Do not lower this without re-measuring.
+    /// (`thiss` read as `this` + `s`). Do not lower this without re-measuring.
     static let englishLikenessMargin = 2
 
     /// After a Telex CANCEL (`Composition.cancelled`, no tone and no vowel mark
@@ -304,8 +249,7 @@ public enum RestoreDecision {
     /// keeps its raw keys.
     ///
     /// `atCommit == true` (the word is being committed):
-    ///   1. any raw is a word, or a regular inflection of one
-    ///      (`containsWordOrRegularInflection`)    -> `.raw`
+    ///   1. any raw is a word                      -> `.raw`
     ///   2. composed is a word                     -> `.composed`
     ///   3. depth(composed) >= max depth(raw) + `englishLikenessMargin`
     ///                                             -> `.composed`
@@ -313,8 +257,7 @@ public enum RestoreDecision {
     ///
     /// `atCommit == false` (the word is still being typed; this only decides
     /// what to DISPLAY): the same, with "is a prefix" in place of "is a word" in
-    /// rules 1 and 2, because the word may simply not be finished yet. Rule 1
-    /// keeps the inflection test too, so the screen agrees with commit.
+    /// rules 1 and 2, because the word may simply not be finished yet.
     ///
     /// `raws` holds every spelling the raw keys could commit as (the
     /// `ww`/`ddd`-collapsed one and the keys exactly as typed); the deepest
@@ -344,14 +287,10 @@ public enum RestoreDecision {
         let rawsLower = distinctLowercased(raws)
         guard rawsLower.contains(where: { isSubsequence(composedLower, of: $0) }) else { return .raw }
         if atCommit {
-            if rawsLower.contains(where: { lexicon.containsWordOrRegularInflection($0) }) { return .raw }
+            if rawsLower.contains(where: { lexicon.contains($0) }) { return .raw }
             if lexicon.contains(composedLower) { return .composed }
         } else {
-            // The inflection test mirrors rule 1 at commit, so the screen and
-            // Space agree (`carries` stays `carries`, not `caries`).
-            if rawsLower.contains(where: {
-                lexicon.isPrefix($0) || lexicon.containsWordOrRegularInflection($0)
-            }) { return .raw }
+            if rawsLower.contains(where: { lexicon.isPrefix($0) }) { return .raw }
             if composedMayWinAsPrefix, lexicon.isPrefix(composedLower) { return .composed }
         }
         let rawDepth = rawsLower.map { lexicon.prefixDepth($0) }.max() ?? 0
@@ -368,7 +307,7 @@ public enum RestoreDecision {
     /// 1934 list lacks "songs": the user saw "songs" and Space replaced it with
     /// "songss". Showing one thing and committing another is worse than either
     /// choice, and with no raw spelling vouched for by the dictionary the screen
-    /// is the better evidence. A raw that IS a word (or inflection) still wins (`chooseAfterCancel`
+    /// is the better evidence. A raw that IS a word still wins (`chooseAfterCancel`
     /// rule 1), and a screen showing raw is left alone.
     public static func chooseAtCommitAfterCancel(
         composed: String, raws: [String], lexicon: Lexicon, displayedComposed: Bool
@@ -380,7 +319,7 @@ public enum RestoreDecision {
         let composedLower = composed.lowercased()
         let rawsLower = distinctLowercased(raws)
         guard rawsLower.contains(where: { isSubsequence(composedLower, of: $0) }) else { return .raw }
-        return rawsLower.contains(where: { lexicon.containsWordOrRegularInflection($0) }) ? .raw : .composed
+        return rawsLower.contains(where: { lexicon.contains($0) }) ? .raw : .composed
     }
 
     /// The mid-word (display) decision for a word the cancel rule accepted: the
