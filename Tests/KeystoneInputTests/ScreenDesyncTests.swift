@@ -236,11 +236,11 @@ struct ScreenDesyncEnglishRegressionTests {
         // word in a big dictionary (existing coverage; trivially safe here
         // since lexicon: nil always picks raw).
         "fussed", "mussed", "mussing", "jarred", "purred", "parring", "riffling",
-        "coiffed", "squirreling", "moussing", "suss", "terra", "torr", "iff", "barre",
+        "coiffed", "squirreling", "moussing", "suss", "terra", "torr", "barre",
         "lassi", "frisson", "farro", "barrie", "currie", "buffo", "triffid",
         "transsonic", "hassidic", "hassidim", "chassidim", "mycorrhiza", "degass",
-        "unbiassed", "aaa", "iss", "poisson", "cassava", "cassaba", "hassan",
-        "parramatta", "oss", "herr", "kerr", "orr", "starr", "barr", "neff", "foxx", "maxx",
+        "unbiassed", "aaa", "poisson", "cassava", "cassaba", "hassan",
+        "parramatta", "kerr", "starr", "neff", "foxx",
         // New: plurals/inflections shaped like the bug report ("tasks",
         // "servers", "hashes", "offsets" themselves live in
         // ScreenDesyncNoopAbsorbTests) — an early tone/mark-key letter

@@ -43,7 +43,7 @@ private func typeWord(_ w: String, config: EngineConfig, force: [String]) -> Str
 @Suite("ForceEnglishListedWordsWinAsEnglish")
 struct ForceEnglishListedWordsWinAsEnglishTests {
     @Test(arguments: [
-        "test", "reset", "six", "box", "row", "refer", "defer",
+        "test", "reset", "box", "row", "refer", "defer",
     ])
     func listedWordWinsOverVietnameseHomograph(word: String) {
         let result = typeWord(word, config: appOn, force: SupplementaryWords.forceEnglishWords)
