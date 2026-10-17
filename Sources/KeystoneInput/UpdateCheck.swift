@@ -163,3 +163,58 @@ public enum UpdateCheck {
         return isNewer(release.version, than: current)
     }
 }
+
+/// Outcome of inspecting the `Info.plist` of an extracted update bundle.
+public enum StagedBundleCheck: Equatable, Sendable {
+    case ok
+    case wrongBundleIdentifier(found: String?)
+    case unreadableVersion(found: String?)
+    case versionMismatch(expected: SemVer, found: SemVer)
+    case notNewer(current: SemVer, found: SemVer)
+
+    /// Short Vietnamese text for the app alert. Empty for `.ok`.
+    public var userMessage: String {
+        switch self {
+        case .ok:
+            return ""
+        case .wrongBundleIdentifier:
+            return "Bản tải về không phải Keystone (sai mã định danh ứng dụng) — đã huỷ để an toàn"
+        case .unreadableVersion:
+            return "Không đọc được số phiên bản của bản tải về — đã huỷ để an toàn"
+        case .versionMismatch(let expected, let found):
+            return "Bản tải về là v\(found) nhưng bản phát hành công bố v\(expected) — đã huỷ để an toàn"
+        case .notNewer(let current, let found):
+            return "Bản tải về (v\(found)) không mới hơn bản đang dùng (v\(current)) — đã huỷ"
+        }
+    }
+}
+
+extension UpdateCheck {
+    /// The Ed25519 signature only proves the zip was once genuinely signed,
+    /// not that it is the build the release tag advertises. So the unpacked
+    /// bundle's own identity is cross-checked against the offered release:
+    /// a replayed OLD signed zip under a NEWER tag fails `versionMismatch`.
+    /// Order: bundle id (exact) -> version parses -> equals offered -> newer
+    /// than the running version.
+    public static func validateStagedBundle(
+        bundleIdentifier: String?,
+        shortVersion: String?,
+        expectedBundleIdentifier: String,
+        offeredVersion: SemVer,
+        currentVersion: SemVer
+    ) -> StagedBundleCheck {
+        guard bundleIdentifier == expectedBundleIdentifier else {
+            return .wrongBundleIdentifier(found: bundleIdentifier)
+        }
+        guard let shortVersion, let found = SemVer(shortVersion) else {
+            return .unreadableVersion(found: shortVersion)
+        }
+        guard found == offeredVersion else {
+            return .versionMismatch(expected: offeredVersion, found: found)
+        }
+        guard found > currentVersion else {
+            return .notNewer(current: currentVersion, found: found)
+        }
+        return .ok
+    }
+}
