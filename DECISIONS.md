@@ -2858,3 +2858,55 @@ with each quick-consonant toggle on, by `CancelKeepsLiteralQuickConsonantsTests`
   typing of common words (see "Why `sysstat` ... NOT protected").
 - Escape hatch: turn off "Huỷ dấu xong thì gõ tiếp chữ thường (như OpenKey)"
   (`literalAfterCancel`), or `useLexicon`, and the old behavior comes back.
+
+## Bảng mã & Converter fixes (2026-10-17)
+
+Branch `claude/encodings-fixes`. Seven fixes found by an independent review of the
+code tables and the Converter.
+
+1. **CP1258 live typing is a real cp1258 decode.** `CP1258Table.decode` returned
+   Latin-1 pseudo-chars, so the tone bytes 0xCC/0xEC/0xD2/0xDE/0xF2 showed as
+   `Ì ì Ò Þ ò` on macOS (`vieejt` -> `viêòt`). It now maps bytes to their Unicode
+   (0xE3 -> ă, 0xF0 -> đ, 0xCC -> U+0300 ...), exactly one scalar per byte and
+   never NFC-normalised, because the engine diffs code units 1:1 with the decoded
+   scalars. **Dependency:** a combining tone mark is a separate scalar but joins the
+   previous letter into one grapheme, so how many Backspaces the app must send for
+   it depends on the grapheme-aware diff done in the other branch (session "sửa nhóm
+   lỗi tiếng Anh", item B). Until that merges, `backspaceCount` still counts scalars.
+   TCVN3 and VNI-Windows keep Latin-1 code points on purpose: the .VnTime / VNI fonts
+   read those code points directly.
+   *Converter:* Unicode -> cp1258 now yields that real form (precomposed quality
+   letter + combining tone). cp1258 -> Unicode accepts both it and the old
+   pseudo-byte form, told apart by marker scalars (combining marks, ă ơ ư đ), and
+   returns NFC. Text with no marker (ASCII, â ê ô without tone) reads the same under
+   both forms.
+2. **Compound Unicode uses canonical order.** Combining classes: horn U+031B = 216,
+   dot below U+0323 = 220, circumflex/breve/grave/acute/hook/tilde = 230. So ệ is
+   `e U+0323 U+0302` and ợ is `o U+031B U+0323`. The output now equals
+   `decomposedStringWithCanonicalMapping` of the NFC form for all 144 vowel
+   combinations (test `compoundTableEqualsNFDOfNFCForEveryVowel`).
+3. **Case transforms.** "Hoa đầu câu" uppercases the first letter of the text and of
+   each sentence (after `. ! ? …` or a line break, skipping spaces, quotes and
+   opening brackets) and leaves every other letter alone. "Hoa Sau Mỗi Từ" uppercases
+   only the first letter of each word (`iPhone` and `HTML` keep their tails;
+   `don't` -> `Don't`). Known edge: `e.g.` or `3.5` style text is a sentence start
+   after the dot only if a letter follows.
+4. **CRLF is preserved.** `Character("\r\n").asciiValue` is 0x0A, which turned CRLF
+   into LF. `asciiUnits(_:)` in OutputTable.swift emits one unit per ASCII scalar and
+   is used by the Converter and by every table's `plain`.
+5. **TCVN3 / VNI-Windows never emit a colliding byte.** Any non-ASCII character that
+   is not a Vietnamese letter the table encodes becomes one `?` per Character
+   (emoji and ZWJ sequences count once). This includes NBSP and curly quotes.
+   `Converter.convertDetailed(...)` returns `ConversionResult(text, substitutedCount)`;
+   `convert` is unchanged, so `App/ConvertView.swift` compiles as before.
+   **Not done (out of scope):** showing the substituted count in the Convert UI.
+   Unicode and cp1258 targets pass other characters through unchanged.
+6. **TCVN3 ư = 0xAD = U+00AD SOFT HYPHEN.** CoreText draws it zero-width outside a
+   real TCVN3 font. It is the standard byte, so it is NOT changed; documented as a
+   known limitation in `TCVN3.swift`.
+7. **Test gaps closed** (`EncodingFixesTests`): uppercase toned vowels (`VIEEJT`,
+   `DDUWOWCJ`, `NGUYEENX`), y-nặng (`yj`, `YJ`, `thuyj`) and edit sequences
+   (`tosf`, `tosf`+Backspace, `vieetj`+Backspace+`s`) for TCVN3, VNI-Windows and
+   cp1258, with expected bytes derived by hand from the table headers. Note
+   `vieetj`+Backspace alone ends as `vieet`, not `viêt`: `viêt` is not a valid syllable
+   so restore-if-invalid reverts it at flush, which is the engine working as designed.
