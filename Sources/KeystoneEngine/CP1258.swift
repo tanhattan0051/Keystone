@@ -76,7 +76,7 @@ struct CP1258Table: OutputTable {
     }
 
     // Windows-1258 high half (0x80-0xFF) -> Unicode scalar, from Python's
-    // `bytes(range(128,256)).decode('cp1258')`. The 8 bytes cp1258 leaves
+    // `bytes(range(128,256)).decode('cp1258')`. The 9 bytes cp1258 leaves
     // undefined (0x81 0x8A 0x8D-0x90 0x9A 0x9D 0x9E) map to the same C1
     // code point so every byte still yields exactly ONE scalar.
     private static let highHalf: [UInt32] = [
