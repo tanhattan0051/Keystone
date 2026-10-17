@@ -105,6 +105,21 @@ struct BoundaryCommitTests {
         #expect(c.handle(SPACE).edit == nil)
     }
 
+    @Test func functionKeyWhileInactiveDropsTheMacroBuffer() {
+        // English mode with English-mode macros: k + F1 + o must not expand "ko"
+        // (its 2 backspaces would land in whatever F1 focused).
+        var cfg = shippedConfig
+        cfg.macrosEnabled = true
+        cfg.macrosExpandWhenVietnameseOff = true
+        cfg.macros = [MacroRule(trigger: "ko", replacement: "không", expandInEnglishMode: true)]
+        let c = shippedController(config: cfg)
+        c.setActive(false)
+        _ = c.handle(letter("k"))
+        #expect(c.handle(F1).edit == nil)
+        _ = c.handle(letter("o"))
+        #expect(c.handle(SPACE).edit == nil)
+    }
+
     // MARK: function keys
 
     @Test func functionKeyIsPassthroughDecision() {

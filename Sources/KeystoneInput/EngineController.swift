@@ -103,10 +103,12 @@ public final class EngineController: @unchecked Sendable {
                     let r = engine.flushInactiveNewline()
                     let noop = r.backspaceCount == 0 && r.text.isEmpty
                     return (false, noop ? nil : r, d)
-                case .commitChord:
+                case .commitChord, .passthrough:
+                    // A function key can move focus just like a chord (F1 opens
+                    // the owner's iTerm2 panel), so the macro buffer must not
+                    // survive it: a trigger completed after it would backspace
+                    // into the newly focused app.
                     engine.resetInactive()
-                    return (false, nil, d)
-                case .passthrough:
                     return (false, nil, d)
                 }
             }

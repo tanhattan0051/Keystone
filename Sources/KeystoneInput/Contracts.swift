@@ -60,7 +60,7 @@ public enum KeyDecision: Equatable, Sendable {
     /// Any other key (function keys, keys with no printable char): passes
     /// through. While Vietnamese is on, the controller finalizes the word
     /// like a caret move first, since such keys can move focus. In English
-    /// mode the engine is untouched.
+    /// mode it drops the macro buffer, like a chord.
     case passthrough
 }
 
