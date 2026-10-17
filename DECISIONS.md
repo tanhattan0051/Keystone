@@ -3041,10 +3041,17 @@ of being text-parsed into junk triggers such as `[{"id"`; and it throws
 `noMacrosFound` when `usableRules` (non-empty trigger) is empty. The prompt shows
 the de-duplicated usable count, and a replace with an empty set is a no-op.
 When "+" adds a row the search query is cleared so the new row is visible, and
-"−" is disabled when no selected row is visible. In replace mode a repeated
-trigger keeps its first *enabled* occurrence (matching `MacroTable.init`, which
-fires the last enabled rule), so an export and re-import can't swap an enabled
-macro for a disabled duplicate.
+"−" is disabled when no selected row is visible. Within an imported file a
+repeated trigger keeps its *last enabled* occurrence (at the first occurrence's
+position; the first one if none is enabled). That mirrors `MacroTable.init`,
+which fires the last enabled rule, so the macro that fires before an export is
+the one that survives a re-import; a test compares the two tables directly.
+(Two earlier versions kept the first occurrence, then the first enabled one;
+both let a round trip change which expansion fires.) `looksLikeJSON` is
+deliberately narrower than "starts with `[` or `{`": `[` must be followed by
+`{`, `]` or the end, `{` by `"` or `}`, so legacy text files whose first trigger
+is `[c]`, `{tm}` or OpenKey's `{:}` still import as text. A JSON decode error is
+shown as "Tệp JSON bị lỗi định dạng: …".
 
 **Storage safety.** `Macro` decodes tolerantly (`decodeIfPresent` with the
 property defaults; a missing id gets a new UUID); explicit CodingKeys keep the
@@ -3079,7 +3086,10 @@ with ⌘ when the combo DOES include ⌘ → record the key: the user is pressin
 their own chord (⌘⇧K), as in any shortcut recorder. A first version cancelled
 on every ⌘ event, which silently broke exactly that case (it worked in v1.1.8);
 the review caught it. Anything else → record. While recording, the button shows
-an "Esc để huỷ" caption. Not verified on a device: the resign-key /
+an "Esc để huỷ" caption, and the switch key itself is ignored
+(`isRecordingSwitchKey`): pressing the applied combo used to toggle `enabled`,
+whose `didSet` turned the engine back on mid-recording, so the next key was
+re-synthesized as keyCode 0 and recorded wrongly. Not verified on a device: the resign-key /
 resign-active paths.
 
 ## AX focus change keeps a word typed in the new target

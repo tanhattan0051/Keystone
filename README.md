@@ -14,7 +14,7 @@ diệt tận gốc lỗi kinh điển *"đang gõ tự nhiên mất tiếng Vi�
 ![Platform](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white)
 ![Swift](https://img.shields.io/badge/Swift-6.0-F05138?logo=swift&logoColor=white)
 ![UI](https://img.shields.io/badge/UI-SwiftUI-1575F9)
-![Tests](https://img.shields.io/badge/tests-741%20·%20251%20ca%20corpus-brightgreen)
+![Tests](https://img.shields.io/badge/tests-745%20·%20251%20ca%20corpus-brightgreen)
 ![License](https://img.shields.io/badge/License-GPLv3-blue)
 [![CI](https://github.com/tanhattan0051/Keystone/actions/workflows/ci.yml/badge.svg)](https://github.com/tanhattan0051/Keystone/actions/workflows/ci.yml)
 
@@ -234,13 +234,13 @@ nghiệp vụ tiếng Việt nằm hết ở tầng engine dưới dạng **hàm
 
 ## Kiểm thử & CI
 
-- **Engine:** 430 test (tính cả các ca tham số hoá) chạy trên **251 ca corpus tiếng Việt** (11 file JSON: thanh, dấu, đặt dấu,
+- **Engine:** 434 test (tính cả các ca tham số hoá) chạy trên **251 ca corpus tiếng Việt** (11 file JSON: thanh, dấu, đặt dấu,
   vị trí, quick-telex, VNI, regression, khôi phục…) cùng bộ test thuần cho `Lexicon`/`RestoreDecision`
   (kể cả "subsequence guard" chặn gõ tắt phụ âm biến `nike` thành `niche`).
 - **Tầng nhập:** 311 test (translator, executor, engine-controller, phím chuyển, smart-switch,
   bộ tự cập nhật — kể cả chạy thật script thay bundle trên bundle giả —, khôi phục theo từ điển — kể cả một bộ chạy trên `/usr/share/dict/words` thật, tự bỏ qua nếu máy không
   có file này).
-- **Tổng: 741 test** (`swift test list`), tất cả xanh; 2 "known issue" được ghi nhận có chủ đích (`room`/`door` gõ Telex ra âm tiết Việt hợp lệ).
+- **Tổng: 745 test** (`swift test list`), tất cả xanh; 2 "known issue" được ghi nhận có chủ đích (`room`/`door` gõ Telex ra âm tiết Việt hợp lệ).
 - **CI:** [`ci.yml`](.github/workflows/ci.yml) chạy `swift build && swift test` (toàn bộ suite) trên
   `macos-15` cho mỗi push & pull request.
 
