@@ -40,13 +40,6 @@ enum SyllableOps {
         return nil
     }
 
-    /// The vowel cells, in order, as their written (quality-marked) letters —
-    /// e.g. cells for "roio" → "oio", after circumflex → "ôi". Used to decide
-    /// whether a repeated vowel is a new nucleus vowel or a circumflex signal.
-    static func vowelLetters(_ cells: [Cell]) -> String {
-        String(cells.compactMap { $0.isVowel ? NFC.qualityLetter($0.base, $0.mark) : nil })
-    }
-
     /// The index of an onset `d` (a plain d consonant with no vowel before it,
     /// not yet đ) — the target for a đ-stroke whether the trigger key is adjacent
     /// (dd), later in the word (dangd), or mid-word (dadng). Vietnamese đ is only
@@ -64,13 +57,23 @@ enum SyllableOps {
     /// run (the u of qu, the i of gi are onset glides, not nucleus vowels). Used
     /// to validity-gate mark application so `quăng` (glide u → nucleus "ă",
     /// valid) and `nữa` (real u → nucleus "ưa", valid) resolve correctly while
-    /// an impossible "uă" is rejected.
-    static func foldedNucleusLetters(_ cells: [Cell]) -> String {
+    /// an impossible "uă" is rejected. It is the ONLY form the nucleus-prefix
+    /// checks of both interpreters (Telex circumflex/w, VNI 6/7/8) should use:
+    /// the unfolded run would include gi's i ("iây" is no nucleus, "ây" is) and
+    /// reject giayas/giay61.
+    ///
+    /// `foldingQu: false` folds only gi's glide. The Telex non-adjacent
+    /// circumflex test needs that: it asks "would this repeated vowel be a new
+    /// nucleus vowel?", and folding qu's u there turns English `queue` ("u" is
+    /// no nucleus vowel, "eu"+"e" is not a prefix) into quêu. No Vietnamese
+    /// syllable is lost by leaving qu unfolded in that one test (quaya and the
+    /// rest of the qu set already worked on the unfolded run).
+    static func foldedNucleusLetters(_ cells: [Cell], foldingQu: Bool = true) -> String {
         let vowelIdx = cells.indices.filter { cells[$0].isVowel }
         guard let first = vowelIdx.first else { return "" }
         let onset = cells[..<first].filter { !$0.isVowel }
         var letters = vowelIdx.map { NFC.qualityLetter(cells[$0].base, cells[$0].mark) }
-        if onset.last?.consonant == "q", vowelIdx.count >= 2,
+        if foldingQu, onset.last?.consonant == "q", vowelIdx.count >= 2,
            cells[vowelIdx[0]].base == .u, cells[vowelIdx[0]].mark == .none {
             letters.removeFirst()
         } else if onset.count == 1, onset[0].consonant == "g", vowelIdx.count >= 2,

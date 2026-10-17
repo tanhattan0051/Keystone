@@ -119,7 +119,8 @@ public final class EventTapController: @unchecked Sendable {
             (1 << CGEventType.keyDown.rawValue) |
             (1 << CGEventType.flagsChanged.rawValue) |
             (1 << CGEventType.leftMouseDown.rawValue) |
-            (1 << CGEventType.rightMouseDown.rawValue)
+            (1 << CGEventType.rightMouseDown.rawValue) |
+            (1 << CGEventType.otherMouseDown.rawValue)
         let refcon = Unmanaged.passUnretained(self).toOpaque()
         guard let port = CGEvent.tapCreate(
             tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
@@ -148,10 +149,25 @@ public final class EventTapController: @unchecked Sendable {
         w.schedule(deadline: .now() + 1.5, repeating: 1.5, leeway: .milliseconds(500))
         w.setEventHandler { [weak self] in
             guard let self, let p = self.tapPort else { return }
-            if !CGEvent.tapIsEnabled(tap: p) { CGEvent.tapEnable(tap: p, enable: true) }
+            if !CGEvent.tapIsEnabled(tap: p) {
+                // Reset BEFORE re-enabling: afterwards the tap thread may already
+                // be handling the first key of a new word, which the reset would drop.
+                self.tapWasInterrupted()
+                CGEvent.tapEnable(tap: p, enable: true)
+            }
         }
         w.resume()
         watchdog = w
+    }
+
+    /// Call whenever the tap was found disabled and re-enabled. Keystrokes typed
+    /// during the gap reached the app untransformed, so the engine's composing
+    /// word no longer matches the screen; the next edit would backspace over
+    /// text it never rendered. Dropping the buffer (no commit: the screen is
+    /// not ours to rewrite) resyncs. Safe from the watchdog queue too:
+    /// `resetBuffer` takes the controller's lock.
+    func tapWasInterrupted() {
+        engine.resetBuffer()
     }
 
     fileprivate func handle(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
@@ -163,13 +179,19 @@ public final class EventTapController: @unchecked Sendable {
             NSLog("Keystone: tap disabled (%@) #%d — re-enabling",
                   type == .tapDisabledByTimeout ? "timeout" : "user input", tapDisableCount)
             if let p = tapPort { CGEvent.tapEnable(tap: p, enable: true) }
+            tapWasInterrupted()
             return nil
         }
         if event.getIntegerValueField(.eventSourceUserData) == Self.selfTag {
             return Unmanaged.passUnretained(event)   // our own synthetic event
         }
-        if type == .leftMouseDown || type == .rightMouseDown {
-            engine.resetBuffer()
+        if type == .leftMouseDown || type == .rightMouseDown || type == .otherMouseDown {
+            // The edit is posted BEFORE the click passes through: our
+            // synthetic events reach the focused app ahead of the click, so
+            // they still land at the old caret, where the word is.
+            if let edit = engine.handleMouseDown() {
+                post(edit, decision: .commitCaretMove, proxy: proxy)
+            }
             return Unmanaged.passUnretained(event)
         }
         if type == .flagsChanged { return Unmanaged.passUnretained(event) }
@@ -192,22 +214,41 @@ public final class EventTapController: @unchecked Sendable {
         // recoverable by the user; a silently eaten keystroke is not.
         let raw = makeRawKey(event)
         let (suppress, edit, decision) = engine.handle(raw)
-        if let edit {
-            // One cheap lock acquire per edit (not per raw keystroke that
-            // passes through untouched) — acceptable on the hot path, same
-            // cost class as EngineController's config lock.
-            let b = behaviorLock.withLock { behavior }
-            let sink = TapSink(source: synthSource, proxy: proxy,
-                               backspaceDown: backspaceDown, backspaceUp: backspaceUp,
-                               textOnKeyDownOnly: b.textOnKeyDownOnly)
-            KeystrokeExecutor(sink: sink).execute(
-                edit,
-                eachGrapheme: b.sendEachKeystroke,
-                clearInlineSuggestion: InlineSuggestionFix.appliesToEdit(
-                    enabledForApp: b.clearsInlineSuggestion, decision: decision, edit: edit)
-            )
+        let isAutorepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+        if let edit, RepostPolicy.canRepostOriginal(decision: decision, edit: edit, isAutorepeat: isAutorepeat) {
+            // The edit is just the typed character: re-emit the user's own
+            // event (keeps keycode, flags, autorepeat) tagged as ours, and
+            // swallow the original. This is NOT a physical passthrough: the
+            // copy goes through the same ordered tapPostEvent channel as
+            // synthetic text (DECISIONS.md, "Do NOT let plain keystrokes
+            // bypass the synthetic channel"). No synthetic keyUp: the physical keyUp
+            // is outside the tap's mask and passes with the real keycode.
+            if let copy = event.copy() {
+                copy.setIntegerValueField(.eventSourceUserData, value: Self.selfTag)
+                copy.tapPostEvent(proxy)
+                return nil
+            }
+            // Copy failed (resource pressure): fall back to the synthetic path.
         }
+        if let edit { post(edit, decision: decision, proxy: proxy) }
         return suppress ? nil : Unmanaged.passUnretained(event)
+    }
+
+    /// Realizes an engine edit as synthetic events (key path and mouse path).
+    private func post(_ edit: EngineResult, decision: KeyDecision, proxy: CGEventTapProxy) {
+        // One cheap lock acquire per edit (not per raw keystroke that
+        // passes through untouched) — acceptable on the hot path, same
+        // cost class as EngineController's config lock.
+        let b = behaviorLock.withLock { behavior }
+        let sink = TapSink(source: synthSource, proxy: proxy,
+                           backspaceDown: backspaceDown, backspaceUp: backspaceUp,
+                           textOnKeyDownOnly: b.textOnKeyDownOnly)
+        KeystrokeExecutor(sink: sink).execute(
+            edit,
+            eachGrapheme: b.sendEachKeystroke,
+            clearInlineSuggestion: InlineSuggestionFix.appliesToEdit(
+                enabledForApp: b.clearsInlineSuggestion, decision: decision, edit: edit)
+        )
     }
 
     private func makeRawKey(_ event: CGEvent) -> RawKey {

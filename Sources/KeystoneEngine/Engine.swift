@@ -2,7 +2,7 @@
 // (design spec Part A §1, §7, §8).
 //
 // The public `Engine` owns the composing word's raw keystrokes and re-derives
-// the whole word on every keystroke via `Telex.fold`, then diffs the newly
+// the whole word on every keystroke via `Telex.fold`/`VNI.fold`, then diffs the newly
 // rendered text against what is currently on screen to produce a minimal
 // (backspaceCount, text) edit. On commit (a non-word boundary character, or
 // an explicit flush), the composition is optionally validated against
@@ -19,7 +19,11 @@
 // observationally a no-op for the default table (pinned by the full corpus
 // suite) while making the legacy tables correct.
 //
-// Phase 1 supports Telex only; `config.inputMethod` is not yet consulted.
+// The one exception is output whose DECODED text contains combining marks
+// (.unicodeCompound): a Cocoa text view deletes a whole base+marks grapheme per
+// Backspace, so there `edit(from:to:table:)` diffs and counts in Characters
+// (see its doc comment). The input method (Telex or VNI) is chosen per
+// keystroke from `config.inputMethod` inside `interpret`.
 
 public final class Engine {
     public var config: EngineConfig {
@@ -147,10 +151,21 @@ public final class Engine {
         return r
     }
 
+    /// Drops the composing word WITHOUT finalizing it: whatever the last render
+    /// showed stays on screen as-is. Used for an app switch / keyboard-focus
+    /// change and Secure Input (the text is no longer ours to rewrite), a click
+    /// while Vietnamese is off, and deactivation. Deactivation through the
+    /// modifier-only switch key arrives as flagsChanged, outside any keyDown,
+    /// so there is no edit to post there: a word composing at that moment keeps
+    /// its last render (a known gap, see DECISIONS.md "Commit the word at click
+    /// / chord / function-key boundaries"). A click or a
+    /// Cmd/Ctrl/Option chord while active uses `flushCaretMove()` instead, so
+    /// the word is committed properly (see `EngineController.handle`).
     public func reset() {
         rawKeys = []; prevUnits = []
-        // `.afterReset`, NOT `.sentenceStart`: a reset fires on a mouse
-        // click / app switch / Cmd-Ctrl-Option chord / deactivation, none of
+        // `.afterReset`, NOT `.sentenceStart`: a reset fires on
+        // deactivation, an app switch / keyboard-focus change, Secure Input
+        // beginning, or a click while Vietnamese is off; none of
         // which tell the engine it's actually at a sentence start — so the
         // next word must NOT auto-capitalize just because the buffer was
         // cleared. But it's also NOT plain `.midSentence`: the engine has no
@@ -226,12 +241,16 @@ public final class Engine {
         return r
     }
 
+    /// English-mode Cmd/Ctrl/Option chord or function key: drop the macro
+    /// buffer without matching it (the key may paste, move the caret or move
+    /// focus).
     public func resetInactive() {
         englishRawKeys = []
         // Same reasoning as `reset()`, including the `.afterReset` (not
-        // `.midSentence`) choice: the only caller is a Cmd/Ctrl/Option chord
-        // in English mode (Cmd+V, Option+←, ...) — `EngineController.handle`'s
-        // `.resetPassthrough` case while `!active` — which tells the engine
+        // `.midSentence`) choice: the caller is a Cmd/Ctrl/Option chord or a
+        // function key in English mode (Cmd+V, Option+←, F1, ...) —
+        // `EngineController.handle`'s `.commitChord, .passthrough` case while
+        // `!active` — which tells the engine
         // nothing about being at a sentence start, so neither a pending
         // terminator nor a sentence start may survive it — but also nothing
         // about what text (if any) already sits before the caret, so a
@@ -283,32 +302,39 @@ public final class Engine {
         }
     }
 
+    /// Whether the mid-word display may switch to the raw keys before the word
+    /// ends. Eager restore is only a preview of `finalize`'s restore branch, which
+    /// runs only with `restoreIfInvalid`; showing raw "docker" mid-word and then
+    /// committing "dỏcke" because restore is off would make the screen jump at
+    /// Space. Every place that decides the eager DISPLAY goes through this one
+    /// property so display and commit agree. (The force-English whitelist in
+    /// `finalize` keeps its own `spellCheck`-only gate: it does not need restore.)
+    private var eagerRestoreEnabled: Bool {
+        config.spellCheck && config.restoreIfInvalid
+    }
+
     // append a word char or handle backspace: re-fold whole word, diff against on-screen
     private func rerender() -> EngineResult {
         let comp = interpret(rawKeys)
         let table = outputTable(for: config.codeTable)
         let newUnits: [UInt16]
-        if config.spellCheck && isUnrecoverable(comp) {
+        if showsComposedAfterCancel(comp) {
+            // Eager restore would render the raw keys here, but the cancel rule
+            // keeps the composed spelling on screen — see `showsComposedAfterCancel`.
+            newUnits = encode(comp, table: table)
+        } else if eagerRestoreEnabled && isUnrecoverable(comp) {
             // Eager restore (Phase 7): the composing word can never become a
             // legal Vietnamese syllable, so render the raw keystrokes
             // literally NOW instead of waiting for the word boundary — same
             // raw-rendering `finalize`'s revert-to-raw branch uses, so there
             // is no visual jump when the word boundary is eventually reached
             // (see DECISIONS.md "Eager restore (spellCheck / Phase 7)").
-            //
-            // Except after a Telex cancel, when the composed spelling is
-            // clearly the more English-like one: the raw keys would bring back
-            // the cancel key the user just removed on purpose (`suss`, then
-            // `unssuspend`) — see `cancelledLiteralApplies`.
-            if cancelledLiteralApplies(comp), midWordChoiceAfterCancel(comp) == .composed {
-                newUnits = encode(comp, table: table)
-            } else {
-                newUnits = Engine.collapseDoubledLiterals(rawKeys).flatMap { table.plain($0) }
-            }
+            newUnits = Engine.collapseDoubledLiterals(rawKeys, inputMethod: config.inputMethod)
+                .flatMap { table.plain($0) }
         } else {
             newUnits = encode(comp, table: table)
         }
-        let r = diff(prevUnits, newUnits, table: table)
+        let r = edit(from: prevUnits, to: newUnits, table: table)
         prevUnits = newUnits
         return r
     }
@@ -345,7 +371,7 @@ public final class Engine {
                 for: rule, atSentenceStart: atSentenceStart, globalAutoCapitalize: config.macroAutoCapitalize)
             var text = Converter.convert(expanded, from: .unicode, to: config.codeTable)
             if let b = boundary { text.append(b) }
-            let bs = prevUnits.count
+            let bs = deletionCount(forWholeWord: prevUnits, table: outputTable(for: config.codeTable))
             rawKeys = []; prevUnits = []
             updateSentenceStart(boundary: boundary, hadWord: hadWord)
             return EngineResult(backspaceCount: bs, text: text)
@@ -374,7 +400,7 @@ public final class Engine {
         // "ww" pair (boss, wrong) are untouched. Shared by both the
         // force-English and restore-if-invalid branches below, and by
         // `revertToRawUnits`.
-        let collapsedRawKeys = Engine.collapseDoubledLiterals(rawKeys)
+        let collapsedRawKeys = Engine.collapseDoubledLiterals(rawKeys, inputMethod: config.inputMethod)
         let rawWord = String(collapsedRawKeys)
         // The composed word is rendered through the UNICODE table regardless
         // of the active code table (a legacy table's ASCII bytes are
@@ -386,11 +412,13 @@ public final class Engine {
         // Reverts to the (w-collapsed) raw keystrokes, capitalizing the first
         // one if the word starts a sentence — shared by both branches below.
         func revertToRawUnits() -> [UInt16] {
-            var keys = collapsedRawKeys
-            if shouldCapitalize, let first = keys.first {
-                keys[0] = Character(first.uppercased())
+            guard shouldCapitalize, let first = collapsedRawKeys.first else {
+                return collapsedRawKeys.flatMap { table.plain($0) }
             }
-            return keys.flatMap { table.plain($0) }
+            // The uppercase of one letter can be several characters (ß -> "SS"),
+            // so it stays a String; `Character(...)` of it would trap.
+            return Engine.uppercasedUnits(first, table: table)
+                + collapsedRawKeys.dropFirst().flatMap { table.plain($0) }
         }
         let finalUnits: [UInt16]
         if config.spellCheck, !rawKeys.isEmpty, let fe = forceEnglish,
@@ -419,9 +447,11 @@ public final class Engine {
             // (`unssuspend` -> `unsuspend`), not only when it is itself listed.
             let choice: RestoreChoice
             if cancelledLiteralApplies(comp), let lexicon {
-                choice = RestoreDecision.chooseAfterCancel(
+                // The commit must not undo what the cancel rule left on screen
+                // (`songss` shows "songs"): see `chooseAtCommitAfterCancel`.
+                choice = RestoreDecision.chooseAtCommitAfterCancel(
                     composed: composedWordU, raws: [rawWord, String(rawKeys)],
-                    lexicon: lexicon, atCommit: true)
+                    lexicon: lexicon, displayedComposed: showsComposedAfterCancel(interpret(rawKeys)))
             } else {
                 choice = RestoreDecision.choose(composed: composedWordU, raw: rawWord, lexicon: lexicon)
             }
@@ -433,13 +463,11 @@ public final class Engine {
         } else {
             finalUnits = encode(capitalized(comp, if: shouldCapitalize), table: table)
         }
-        let common = commonPrefixCount(prevUnits, finalUnits)
-        let bs = prevUnits.count - common
-        var text = table.decode(Array(finalUnits[common...]))
-        if let b = boundary { text.append(b) }
+        var result = edit(from: prevUnits, to: finalUnits, table: table)
+        if let b = boundary { result.text.append(b) }
         rawKeys = []; prevUnits = []
         updateSentenceStart(boundary: boundary, hadWord: hadWord)
-        return EngineResult(backspaceCount: bs, text: text)
+        return result
     }
 
     // A word/transform character for the active method. Everything else is a
@@ -460,6 +488,11 @@ public final class Engine {
     ///
     ///   - `ww` → `w`: `w` is always the ư/horn transform, so a doubled `w` is
     ///     the escape for one literal `w` — "wwin"/"swwim" revert to "win"/"swim".
+    ///     Pairwise, like OpenKey: after the escape the next `w` is literal
+    ///     (OpenKey's `tempDisableKey`), so w,w,w reads "ww" on screen and at
+    ///     commit, and the web prefix is typed w,w,w,w. Leaving a run of three
+    ///     alone was tried and rejected: the third key then grows the screen
+    ///     from "w" to "www" in one keystroke and breaks w,w,w,w.
     ///   - `ddd` → `dd`: `dd` is the đ transform, so a THIRD `d` undoes the đ and
     ///     leaves two literal `d`s. An English/tech word whose literal starts
     ///     "dd" is therefore typed with a leading "ddd" (its only route, since
@@ -468,8 +501,12 @@ public final class Engine {
     ///     "dd" pair (English "add", "buddy") is NOT touched — only a run of
     ///     three. See DECISIONS.md "The ddd→dd escape in raw-restore".
     ///
+    /// VNI is the identity: its escapes are digits, and `w`/`d` are ordinary
+    /// letters there ("dddos", "swwim" are what the user typed).
+    ///
     /// Case of the kept character(s) is preserved.
-    private static func collapseDoubledLiterals(_ keys: [Character]) -> [Character] {
+    static func collapseDoubledLiterals(_ keys: [Character], inputMethod: InputMethod) -> [Character] {
+        if inputMethod == .vni { return keys }
         func isD(_ c: Character) -> Bool { c == "d" || c == "D" }
         func isW(_ c: Character) -> Bool { c == "w" || c == "W" }
         var out: [Character] = []
@@ -512,11 +549,58 @@ public final class Engine {
         return i
     }
 
-    private func diff(_ prev: [UInt16], _ new: [UInt16], table: OutputTable) -> EngineResult {
-        let i = commonPrefixCount(prev, new)
-        let bs = prev.count - i
-        let text = table.decode(Array(new[i...]))
-        return EngineResult(backspaceCount: bs, text: text)
+    /// The edit that turns the on-screen `prev` into `new`.
+    ///
+    /// Normally a CODE-UNIT diff (common prefix, then delete the rest and type
+    /// the new tail), which is what the legacy and NFC tables need. But when the
+    /// decoded text has combining marks, a Cocoa text view deletes a whole
+    /// grapheme (base letter + its marks) per Backspace, so a unit count would
+    /// delete only the U+0301 of "ó" and leave a bare "o" + stray mark. In that
+    /// case we diff in Characters: keep the common leading graphemes, delete the
+    /// previous text's remaining graphemes, and retype the new text from the
+    /// first differing grapheme (delete-and-retype, never edit inside a cluster).
+    /// [VERIFY on device] an app that deletes per scalar would now under-delete.
+    ///
+    /// The decision is made from the decoded strings, not from a table name, so
+    /// any table that decodes to combining marks gets the grapheme rule.
+    private func edit(from prev: [UInt16], to new: [UInt16], table: OutputTable) -> EngineResult {
+        let prevText = table.decode(prev)
+        let newText = table.decode(new)
+        guard Engine.hasCombiningMarks(prevText) || Engine.hasCombiningMarks(newText) else {
+            let i = commonPrefixCount(prev, new)
+            return EngineResult(backspaceCount: prev.count - i,
+                                text: table.decode(Array(new[i...])))
+        }
+        let prevGraphemes = Array(prevText)
+        let newGraphemes = Array(newText)
+        var i = 0
+        let m = min(prevGraphemes.count, newGraphemes.count)
+        // Compare scalars, not Character ==, which treats decomposed and
+        // precomposed spellings as equal and would keep a cluster that is
+        // spelled differently on screen.
+        while i < m && prevGraphemes[i].unicodeScalars.elementsEqual(newGraphemes[i].unicodeScalars) { i += 1 }
+        return EngineResult(backspaceCount: prevGraphemes.count - i,
+                            text: String(newGraphemes[i...]))
+    }
+
+    /// How many Backspaces erase the whole on-screen word `prev` (macro
+    /// expansion replaces it entirely): code units, or graphemes when the
+    /// decoded word has combining marks (see `edit`).
+    private func deletionCount(forWholeWord prev: [UInt16], table: OutputTable) -> Int {
+        let text = table.decode(prev)
+        return Engine.hasCombiningMarks(text) ? text.count : prev.count
+    }
+
+    /// A Character is a grapheme cluster, so text with combining marks has
+    /// fewer Characters than Unicode scalars.
+    static func hasCombiningMarks(_ text: String) -> Bool {
+        text.count != text.unicodeScalars.count
+    }
+
+    /// `ch` uppercased, as table code units. The uppercase may be several
+    /// characters (ß -> "SS", ŉ -> "ʼN"), so each is emitted separately.
+    static func uppercasedUnits(_ ch: Character, table: OutputTable) -> [UInt16] {
+        ch.uppercased().flatMap { table.plain($0) }
     }
 
     // MARK: - Parse / render / validity
@@ -598,8 +682,9 @@ public final class Engine {
             } else if cell.dStroke {
                 out += table.dStroke(upper: cell.isUpper)
             } else {
-                let ch: Character = cell.isUpper ? Character(String(cell.consonant).uppercased()) : cell.consonant
-                out += table.plain(ch)
+                out += cell.isUpper
+                    ? Engine.uppercasedUnits(cell.consonant, table: table)
+                    : table.plain(cell.consonant)
             }
         }
         return out
@@ -617,9 +702,19 @@ public final class Engine {
             return p.codaString.isEmpty && Phonology.onsets.contains(p.onsetString)
         }
         guard Phonology.isLegalOnset(p.onsetString, firstNucleus: p.firstNucleus) else { return false }
+        guard Phonology.isLegalQOnset(p.onsetString, nucleus: p.nucleusString) else { return false }
         guard Phonology.isLegalNucleus(p.nucleusString) else { return false }
         guard Phonology.isLegalCoda(p.codaString) else { return false }
-        guard Phonology.isLegalRime(nucleus: p.nucleusString, coda: p.codaString) else { return false }
+        // A lone vowel letter with no onset, coda or tone is the letter itself
+        // (chữ ă, bảng chữ cái), not an attempted syllable, so the closed-only
+        // rule of `isCompleteRime` does not apply to it: "aw " stays "ă ", while
+        // "aws " and "saw " still restore.
+        let isLoneLetter = p.onsetString.isEmpty && p.codaString.isEmpty
+            && p.nucleusIdx.count == 1 && comp.tone == .ngang
+        let rimeIsComplete = isLoneLetter
+            ? Phonology.isLegalRime(nucleus: p.nucleusString, coda: p.codaString)
+            : Phonology.isCompleteRime(nucleus: p.nucleusString, coda: p.codaString)
+        guard rimeIsComplete else { return false }
         guard Phonology.toneAllowed(comp.tone, coda: p.codaString) else { return false }
         return true
     }
@@ -652,7 +747,7 @@ public final class Engine {
         guard !RestoreDecision.mixesLetterCase(rawKeys) else { return false }
         return RestoreDecision.cancelDeletedExactlyOneKey(
             typedCount: rawKeys.count,
-            collapsedTypedCount: Engine.collapseDoubledLiterals(rawKeys).count,
+            collapsedTypedCount: Engine.collapseDoubledLiterals(rawKeys, inputMethod: config.inputMethod).count,
             composedCount: comp.cells.count)
     }
 
@@ -668,15 +763,26 @@ public final class Engine {
     /// may be the real spelling. Equal strings (no `ww`/`ddd`) are evaluated once
     /// by `RestoreDecision.chooseAfterCancel`.
     private func rawSpellings(of keys: [Character]) -> [String] {
-        [String(Engine.collapseDoubledLiterals(keys)), String(keys)]
+        [String(Engine.collapseDoubledLiterals(keys, inputMethod: config.inputMethod)), String(keys)]
+    }
+
+    /// Does the screen show the COMPOSED spelling of a cancelled word because of
+    /// the cancel display rule, where eager restore would otherwise have shown
+    /// the raw keys? One definition for `rerender` (what to draw) and `finalize`
+    /// (what the screen already shows, so Space must not change it), so the two
+    /// cannot drift. `comp` is the plain fold of `rawKeys`, as `rerender` sees it.
+    private func showsComposedAfterCancel(_ comp: Composition) -> Bool {
+        eagerRestoreEnabled && cancelledLiteralApplies(comp) && isUnrecoverable(comp)
+            && midWordChoiceAfterCancel(comp) == .composed
     }
 
     /// What the screen should show WHILE the word is still being typed, for a
-    /// word `cancelledLiteralApplies` accepted. A click or a Cmd/Ctrl/Option
-    /// chord resets the engine without committing, so this display can become
-    /// the final text. Hence: once the keystroke that fired the cancel was
-    /// itself displayed as the RAW keys, a later key may switch the screen to
-    /// the composed spelling only through the margin rule, unless the raw
+    /// word `cancelledLiteralApplies` accepted. An app switch or a keyboard-focus
+    /// change resets the engine without committing (a click, chord or function
+    /// key commits it), so this display can become the final text. Hence: once
+    /// the keystroke that fired the cancel was itself displayed as the RAW keys,
+    /// a later key may switch the screen to the composed spelling only through
+    /// the margin rule, unless the raw
     /// spelling died by that keystroke's position (the habit-cancel signature):
     /// see `RestoreDecision.chooseMidWordAfterCancel`, which has the rule and the
     /// measurements.

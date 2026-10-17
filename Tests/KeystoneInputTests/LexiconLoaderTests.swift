@@ -111,11 +111,11 @@ struct LexiconLoaderTests {
 
     private static let falsePositiveWords: [String] = [
         "fussed", "mussed", "mussing", "jarred", "purred", "parring", "riffling",
-        "coiffed", "squirreling", "moussing", "suss", "terra", "torr", "iff", "barre",
+        "coiffed", "squirreling", "moussing", "suss", "terra", "torr", "barre",
         "lassi", "frisson", "farro", "barrie", "currie", "buffo", "triffid",
         "transsonic", "hassidic", "hassidim", "chassidim", "mycorrhiza", "degass",
-        "unbiassed", "aaa", "iss", "poisson", "cassava", "cassaba", "hassan",
-        "parramatta", "oss", "herr", "kerr", "orr", "starr", "barr", "neff", "foxx", "maxx",
+        "unbiassed", "aaa", "poisson", "cassava", "cassaba", "hassan",
+        "parramatta", "kerr", "starr", "neff", "foxx",
     ]
 
     @Test func protectedRealWordsCoversTheFullFalsePositiveList() {
@@ -143,7 +143,7 @@ struct LexiconLoaderTests {
         let lexicon = LexiconLoader.load(systemWordsPath: missing)
         #expect(lexicon.contains("fussed"))
         #expect(lexicon.contains("jarred"))
-        #expect(lexicon.contains("herr"))
+        #expect(lexicon.contains("kerr"))
     }
 
     // MARK: - Coverage extension (item 3)

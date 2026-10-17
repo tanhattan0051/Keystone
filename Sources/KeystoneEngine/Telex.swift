@@ -294,11 +294,13 @@ enum Telex {
                 // nucleus vowel would not form a legal nucleus (so the user meant
                 // a mark: roiof→rồi). Real triphthongs (ngoaos→ngoáo) append.
                 let adjacent = ei == SyllableOps.lastVowelIndex(cells)
-                let appended = SyllableOps.vowelLetters(cells) + String(bv.letter)
+                // gi's glide only: folding qu here would make English `queue`
+                // read as quêu (see SyllableOps.foldedNucleusLetters).
+                let appended = SyllableOps.foldedNucleusLetters(cells, foldingQu: false) + String(bv.letter)
                 if adjacent || (allowFreeToneMark && !Phonology.isNucleusPrefix(appended)) {
                     cells[ei].mark = .circumflex
                     if SyllableOps.marksLegal(cells),
-                       adjacent || Phonology.isNucleusPrefix(SyllableOps.vowelLetters(cells)) {
+                       adjacent || Phonology.isNucleusPrefix(SyllableOps.foldedNucleusLetters(cells, foldingQu: false)) {
                         return .mark(key: lo, targets: [ei])
                     }
                     cells[ei].mark = .none   // reject → fall through to append

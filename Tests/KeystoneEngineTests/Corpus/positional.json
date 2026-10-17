@@ -47,7 +47,7 @@
   { "name": "nuawx -> nữa (w horns u, not breve a)", "keys": "nuawx", "method": "telex", "orthography": "modern", "restoreIfInvalid": true, "expected": "nữa" },
   { "name": "cuaw -> cưa", "keys": "cuaw", "method": "telex", "orthography": "modern", "restoreIfInvalid": true, "expected": "cưa" },
   { "name": "muaw -> mưa", "keys": "muaw", "method": "telex", "orthography": "modern", "restoreIfInvalid": true, "expected": "mưa" },
-  { "name": "hoaw -> hoă (breve a wins, oă valid)", "keys": "hoaw", "method": "telex", "orthography": "modern", "restoreIfInvalid": true, "expected": "hoă" },
+  { "name": "hoawcj -> hoặc (breve a wins, oă valid)", "keys": "hoawcj", "method": "telex", "orthography": "modern", "restoreIfInvalid": true, "expected": "hoặc" },
   { "name": "cangw -> căng (breve past coda)", "keys": "cangw", "method": "telex", "orthography": "modern", "restoreIfInvalid": true, "expected": "căng" },
   { "name": "quawng -> quăng (qu-glide u skipped, breve a)", "keys": "quawng", "method": "telex", "orthography": "modern", "restoreIfInvalid": true, "expected": "quăng" }
 ]

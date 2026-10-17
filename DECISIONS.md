@@ -497,6 +497,8 @@ stored-property initial value is untouched (still `true`), so a fresh
 engine's very first word is still treated as sentence-initial — this is what
 the existing `AutoCapitalizeTests` suite (fresh engines) relies on.
 
+*(Update 2026-10-17: a mouse click and a Cmd/Ctrl/Option chord no longer call `reset()`; they commit the word through `flushCaretMove()`, which also lands on `.afterReset`, so the sentence-position reasoning here is unchanged. See "Commit the word at click / chord / function-key boundaries".)*
+
 ## Auto-capitalize sau Enter / đầu dòng (Return → commitNewline)
 
 **Bug:** `autoCapitalize` never fired at the start of a new LINE. Pressing
@@ -622,6 +624,8 @@ text IS already there, and `reset()`/`resetInactive()` now set
 right after a reset still does NOT capitalize on its own — `settled ==
 .midSentence` and `pending == nil` still make `isSentenceStart` false —
 only a terminator that goes on to reach a confirming whitespace does.
+
+*(Update 2026-10-17: a mouse click and a Cmd/Ctrl/Option chord no longer call `reset()`; they commit the word through `flushCaretMove()`, which also lands on `.afterReset`, so the sentence-position reasoning here is unchanged. See "Commit the word at click / chord / function-key boundaries".)*
 
 Accepted consequence of the conservative `gluedToText: true` assumption: if
 a reset actually lands right after WHITESPACE rather than text (the caller
@@ -775,6 +779,8 @@ not capitalize on its own either way).
 Covered by `EngineTogglesTests.swift`'s `EnglishModeResetClearsSentenceStart`
 suite.
 
+*(Update 2026-10-17: `.resetPassthrough` is now `.commitChord`; while Vietnamese is on it commits the word instead of dropping it. See "Commit the word at click / chord / function-key boundaries".)*
+
 ## Auto-capitalize: quên vị trí câu sau Backspace / phím di chuyển con trỏ
 
 **Bug:** with `autoCapitalize` on, `xong.` + Backspace + `, các` gave
@@ -814,6 +820,8 @@ terminator typed next plus whitespace still confirms, so `hoa.` + Backspace +
 (Tab may be a focus change or shell completion), and ForwardDelete removes
 what FOLLOWS the caret, so what precedes it is unchanged. Modifier chords
 (Option+Left, ...) were already `.resetPassthrough`.
+
+*(Update 2026-10-17: `.resetPassthrough` is now `.commitChord`; while Vietnamese is on it commits the word instead of dropping it. See "Commit the word at click / chord / function-key boundaries".)*
 
 **Accepted trade-off:** a Backspace that deletes something harmless still
 forgets a real sentence start — `xong. ` + Backspace + a re-typed " " + `cacs`
@@ -1233,6 +1241,8 @@ whose modifiers don't include at least one of ⌃⌥⌘; a modifier-ONLY chord m
 still be Shift-inclusive (⌃⇧ is the long-standing default) since there's no
 key for Shift to type. `SwitchHotKey.validationError` also rejects zero
 modifiers outright (a bare key isn't a hot key).
+
+*(Update 2026-10-17: `.resetPassthrough` is now `.commitChord`; while Vietnamese is on it commits the word instead of dropping it. See "Commit the word at click / chord / function-key boundaries".)*
 
 **Disabled is checked BEFORE validation.** `applySwitchHotKeyRegistration()`
 checks `switchKeyEnabled` first and tears both mechanisms down immediately if
@@ -2210,6 +2220,10 @@ already re-derives the whole word from `rawKeys` on every keystroke
 revert from firing earlier, character by character, once the outcome is
 already certain — that's `spellCheck`/`EngineConfig.spellCheck`.
 
+*(Update 2026-10-17: eager restore (and the cancel display rule that rides on it) now also
+requires `restoreIfInvalid`. With restore off the commit keeps the composed word, so showing raw
+keys mid-word made Space change what the screen showed. See "Engine edit hardening".)*
+
 **Dead vs. merely invalid — the reason `isValid` couldn't be reused as-is.**
 `Engine.isValid` (used by `finalize`'s restore-if-invalid) answers "is this
 syllable legal RIGHT NOW" — and a huge fraction of real Vietnamese words are
@@ -2346,7 +2360,7 @@ Vietnamese syllable, so it can safely revert to raw keystrokes — `docker`
 composes to the dead `dỏcke`, `task` to the invalid `ták`. But a second,
 disjoint class of English word exists that neither of those features can ever
 touch: one whose Telex keystrokes compose a syllable that IS phonologically
-legal Vietnamese. `test`→`tét`, `reset`→`rết`, `six`→`sĩ`, `box`→`bõ`,
+legal Vietnamese. `test`→`tét`, `reset`→`rết`, `box`→`bõ`,
 `row`→`rơ` are all valid Vietnamese syllables, so `isValid` says yes,
 `isUnrecoverable` says "never dead", and the word stays Vietnamese all the
 way to commit — today, with no code change, that's actually correct: nothing
@@ -2357,7 +2371,7 @@ solves, not something the previous two features overlooked.
 
 **Why not just "prefer English when the composition also happens to be a
 real English word"?** That was the obvious first design and it's wrong: the
-same Telex shape that makes `test`/`reset`/`six` look like English also makes
+same Telex shape that makes `test`/`reset` look like English also makes
 extremely common Vietnamese words look like English. `car`→`cả`, `cow`→`cơ`,
 `bee`→`bê`, `bus`→`bú` are everyday Vietnamese words the user types
 constantly, and `car`/`cow`/`bee`/`bus` are all real English words too — a
@@ -2372,7 +2386,7 @@ not a rule.
 
 **The tradeoff, stated plainly.** Every entry in
 `SupplementaryWords.forceEnglishWords` is a deliberate decision to SHADOW a
-Vietnamese homograph: typing `test`/`reset`/`row`/`box`/`six`/`refer`/`defer`
+Vietnamese homograph: typing `test`/`reset`/`row`/`box`/`refer`/`defer`
 in actual Vietnamese prose (rare, but not impossible) will now render the
 English word instead. This is only acceptable because each entry was chosen
 for having English usage that vastly outweighs its Vietnamese collision in
@@ -2386,6 +2400,27 @@ ordinary restore-if-invalid already loses to Vietnamese for a different
 reason and doesn't need this mechanism either). `ForceEnglishListIntegrity`'s
 `everyEntryIsAGenuineVietnameseHomographCollision` test enforces exactly
 this, so the list can't silently accumulate dead weight.
+
+**`six` was dropped; `box`/`row` are kept knowingly.** `six` was originally listed, but it made
+`sĩ` (bác sĩ, ca sĩ, nghệ sĩ) untypeable (`typeShipped("six") == "six "`), far too high a price
+when `sĩ` has no other Telex spelling. It now gives `sĩ `; English `six` needs English mode. `box` (bõ) and
+`row` (rơ) stay because the owner seeded them and the Vietnamese words are rare. `rơ` is still
+typeable as `r[` / `ro[`; `bõ` is only reachable by typing another tone first and then `x`
+(bofx, bojx, borx, bosx). Pinned in `ShippedWordListTests`.
+
+**Habit-cancel words removed from `protectedRealWords`.** `iss`, `iff`, `orr`, `herr`, `oss`,
+`barr`, `maxx` made the RAW spelling of the OpenKey habit-cancel (type i-s, see `í`, press s again,
+see `is`, Space) a dictionary word, so Space committed `iss` instead of `is`. They are removed;
+the habit now commits `is`/`if`/`or`/`her`/`os`/`bar`/`max`. Accepted cost: typing the rare words
+naturally (Herr, OSS, Barr, Maxx) commits the shorter word. `has`, `using`, `uses` were added to
+the inflections list so the habit (`hass`, `ussing`, `usses`) wins there too. Natural `has` still
+types `há` (valid Vietnamese syllable; a known limit).
+
+Still blocking a common word the same way, left for the owner to decide (each removal makes the
+rare raw word commit the shorter one): `barre` (bare), `poisson` (poison), `mussed` (mused),
+`parring` (paring), `torr` (tor), `terra`, `hassan`, `suss`. Entries whose shorter form starts with
+a dead onset (`starr`, `foxx`, `fussed`, `jarred`) do NOT block it: no mark ever shows, so the
+habit never presses the cancel key.
 
 **Mechanism: gated under `spellCheck`, decided in `finalize`, wins over
 everything else.** Unlike eager restore (which hooks `rerender`, mid-word),
@@ -2451,7 +2486,7 @@ restore still land the correct final English word.
 and `literalAfterCancel`). This matters because a word that should start with a
 literal "dd" has no other route: bare `ddos` is the extremely common Vietnamese
 word `đó` (`dd`+`o`+`s`→sắc — identical keystrokes), so we can NOT force it to
-English without breaking `đó` (same class as `six`↔`sĩ`, see "Force-English
+English without breaking `đó` (same class as `box`↔`bõ`, see "Force-English
 whitelist"). The user types `dddos` to mean "ddos" (e.g. DDoS).
 
 The bug: `finalize`'s revert-to-raw and `rerender`'s eager restore both render
@@ -2469,7 +2504,8 @@ that homograph is inherent and unchanged.)
 
 Design spec §7 ("Secure input mode") was written on day one and never built:
 `SystemState.secureInputActive` in `Contracts.swift` stayed `false` forever.
-It bit for real on 2026-09-28.
+It bit for real on 2026-09-28. *(Update 2026-10-17: the unused `SystemState` and
+`SystemStateCache` were deleted from `Contracts.swift`.)*
 
 **Evidence (2026-09-28).** At 13:02:26 Chrome, with a workplace.vietnix.vn tab
 open, turned macOS Secure Input on while it was the frontmost app. Discord had
@@ -2537,7 +2573,7 @@ cannot be the thing that reports it; and the state is read by SwiftUI and the
 per-app code, not by the tap callback. The pure decision logic is the testable
 `SecureInputTracker` in `KeystoneInput` (`SecureInputTrackerTests`); `AppModel`
 is only the thin sampler. `SystemState.secureInputActive` in `Contracts.swift`
-stays as pre-existing, unused scaffolding: it was deliberately not touched.
+stayed as pre-existing, unused scaffolding at the time; it was deleted on 2026-10-17.
 
 ## Cancel keeps the literal: English-likeness by dictionary prefixes
 
@@ -2762,6 +2798,8 @@ so the cancel key showed the raw keys, but a later key made composed `mise` a
 prefix of some word and the "composed is a prefix" rule flipped the screen to
 the composed spelling, although the commit keeps `missed`.
 
+*(Update 2026-10-17: a click, a chord and a function key now commit the word, so the "display becomes final text" case is down to an app switch or a keyboard-focus change, which still reset without committing. The sticky rule stays for those.)*
+
 The rule now (`RestoreDecision.chooseMidWordAfterCancel`, called by
 `Engine.midWordChoiceAfterCancel`): re-derive, from `rawKeys` alone (no new
 engine state, so Backspace needs nothing), the keystroke where the cancel fired
@@ -2848,6 +2886,10 @@ with each quick-consonant toggle on, by `CancelKeepsLiteralQuickConsonantsTests`
   Cmd/Ctrl/Option chord the engine resets without committing, and whatever was
   displayed stays; that is why the sticky rule above exists, and why it is not
   zero.
+  *(Update 2026-10-17: a click or chord now commits; only an app or keyboard-focus switch
+  still resets without committing. And when the cancel display rule shows the composed
+  spelling, Space now commits it too, so `troff`/`errp` commit `trof`/`erp`. That trade is
+  measured in "Space commits what the cancel rule showed".)*
 - It is a measured heuristic, not a guarantee. 89.39% of habit-typed words on the
   corpus come out right, not 100%. A natural word whose composed form is
   accidentally 2+ letters deeper in the dictionary than its raw one, and that the
@@ -2858,3 +2900,267 @@ with each quick-consonant toggle on, by `CancelKeepsLiteralQuickConsonantsTests`
   typing of common words (see "Why `sysstat` ... NOT protected").
 - Escape hatch: turn off "Huỷ dấu xong thì gõ tiếp chữ thường (như OpenKey)"
   (`literalAfterCancel`), or `useLexicon`, and the old behavior comes back.
+
+## Commit the word at click / chord / function-key boundaries
+
+*(2026-10-17, from the v1.1.8 review.)* A mouse-down and a Cmd/Ctrl/Option chord used to call
+`engine.reset()`, which forgets the composing word without finalizing it, so whatever the last
+mid-word render showed became final text: "users" + Cmd+Return left "úe", "test" + click left
+"tét". Function keys decided `.passthrough` and left the word composing, so "vie" + F1 + "e" made
+the engine backspace into whatever F1 had focused (F1 is the owner's iTerm2 floating-panel hotkey).
+The design spec already listed a click as a commit boundary (Part A §8); the code never did it.
+
+**What changed.**
+- `KeyDecision.resetPassthrough` is renamed `.commitChord`. While Vietnamese is on, `.commitChord`
+  and `.passthrough` both run `engine.flushCaretMove()` (commit, then forget the sentence position),
+  the same as an arrow key. The key itself always passes through.
+- `EngineController.handleMouseDown()` does the same for left, right and other (newly added to the
+  tap mask) mouse-downs. `EventTapController` posts its edit through the same helper as the key path,
+  then lets the click through. Posting first matters: the synthetic events reach the focused app
+  ahead of the click, so they land at the old caret where the word is.
+- English mode (Vietnamese off): a chord and a function key both call `resetInactive()`, so a
+  macro trigger typed across F1 can no longer expand and backspace into the newly focused app. A
+  click there still calls `reset()`, as before.
+- `resetBuffer()`/`Engine.reset()` remain for app activation, keyboard-focus change and Secure
+  Input: the text on screen is no longer ours to rewrite, and committing would type into the wrong
+  app. Deactivation also still resets, but for a different reason, and that one is a **known gap**:
+  the modifier-only switch key (⌃⇧ by default) arrives as flagsChanged, not keyDown, so there is no
+  keystroke to commit the word on. "test" + ⌃⇧ still leaves "tét" (same as before this change).
+  Fixing it means committing and posting the edit from the switch-key path before deactivating;
+  not done here.
+
+**Costs, stated plainly.** A click, chord or function key now runs full commit-time finalization:
+macros expand (trigger `ko` + click gives "không"), the force-English list and auto-capitalize apply,
+exactly as for an arrow key. `.passthrough` is the catch-all for keys the engine does not
+understand; flushing on it forgets the sentence position even with nothing composing ("xin. " + F1 +
+"chaof " no longer auto-capitalizes "chào"). Accepted because any such key can move focus.
+Synthetic Backspaces and text are now also posted while the user physically holds Cmd/Ctrl/Option;
+they come from a private-state source that carries no modifier flags. Neither the chord path nor
+the click ordering can be unit-tested; check them live before a release (TextEdit, Chrome omnibox
+with "Sửa lỗi gợi ý" on, iTerm2: "test"+⌘A, "test"+⌘↩, "test"+click elsewhere, "vie"+F1).
+
+**Rejected.** Keeping `reset()` for chords (that is the bug). Plain `flush()` for chords, keeping
+the sentence position: a paste, undo or ⌘← changes what precedes the caret. Special-casing F-key
+keycodes in `KeyTranslator`: misses every other focus-moving key. Posting the click before the edit:
+the rewrite would land at the new caret.
+
+**Pinned by** `BoundaryCommitTests` (shipped config through `EngineController`) and `TranslatorTests`.
+
+## VNI keeps every typed w and d; Telex `www` stays OpenKey's
+
+`Engine.collapseDoubledLiterals` turns the Telex escapes back into the literal the user meant when
+an invalid word reverts to raw keys (`swwim` → `swim`, `dddos` → `ddos`). It also ran in VNI, where
+`w` and `d` are ordinary letters, so VNI `dddos` committed `ddos`, `swwim` committed `swim`. It now
+takes the input method and is the identity in VNI (`dddos`, `swwim`, `wwi`, `uww` are kept as typed).
+Pinned by `CollapseDoubledLiteralsTests` and `ShippedCommitMatchesScreenTests`.
+
+The review also reported Telex w,w,w → `ww` as a bug. It is not: OpenKey does the same (Engine.cpp:
+a standalone ư plus `w` restores to `w` and sets `tempDisableKey`, so the next `w` is literal), the
+screen shows `ww` before Space, and the web prefix is typed w,w,w,w (→ `www`), which owners with
+OpenKey muscle memory already do. A version that left a run of three w's alone was built and
+measured: the third key grew the screen from `w` to `www` in one keystroke, and the w,w,w,w habit
+then committed `wwww`. It was reverted before merge.
+
+## Space commits what the cancel rule showed
+
+After a Telex cancel, the mid-word display (`RestoreDecision.chooseMidWordAfterCancel`) accepts a
+composed spelling that is a dictionary PREFIX, but the commit (`chooseAfterCancel(atCommit: true)`)
+needed a dictionary WORD. The 1934 list lacks most plurals, so the habit `songss` showed "songs" and
+Space replaced it with "songss"; likewise `keyss`, `bitss`, `Perrl`.
+
+**What changed.** `RestoreDecision.chooseAtCommitAfterCancel` is `chooseAfterCancel(atCommit: true)`,
+except that `.raw` becomes `.composed` when the screen already shows the composed spelling because
+of the cancel display rule and no raw spelling is itself a dictionary word. "The screen shows
+composed because of the cancel rule" is one private helper, `Engine.showsComposedAfterCancel`, used
+by both `rerender` and `finalize`, so the two cannot drift. Nothing changes when the screen shows
+raw, when the cancel rule does not apply, or with spellCheck off.
+
+**Measured** (base 75acbb9 vs this branch, shipped config and real lexicon, the change isolated by
+building the branch with only this rule disabled; corpus = every man page in man1/5/8 + this repo's
+code and docs, 3,250,686 word tokens, 55,342 distinct, case kept):
+- habit typing (press the key again whenever a mark shows): +42,536 tokens correct (+1.31 points;
+  `Perl`, `org`, `keys`, `conf`, `const`, `info`, `doesn`, `sets`, `arg`, `dir`, `bits`…), 8 lost
+  (`FEFF`, `ABFF`, `preceed`).
+- natural typing: 125 tokens newly wrong (0.004%), 0 fixed: `troff`→`trof` (41), `Renee`→`Rene`
+  (22), `otool`, `errp`, `Porro`, `perrno`, ALL-CAPS hex/constants (`FEFF`, `YESSTR`, `VARRUN`)…
+  Each is an out-of-dictionary word ending in a doubled tone letter at the same prefix depth as the
+  habit case, and the screen already showed the shorter form before Space on base too.
+
+This knowingly breaks the "natural typing: 0 newly wrong" rule from "Cancel keeps the literal" for
+those words; the habit gain is about 340 times larger. A dictionary-only sweep cannot see this branch
+(a dictionary raw always wins rule 1). Escape hatch as before: `literalAfterCancel` or `useLexicon`
+off. Pinned by `ShippedCommitMatchesScreenTests`, `ChooseAtCommitAfterCancelTests` and
+`CommitAfterCancelTradeoffTests` (`troff`, `purrs` as known costs).
+
+**Known display jump, and why it stays.** Removing `maxx` from `protectedRealWords` (see the Lớp B
+section) lets the cancel rule show composed "max" for habit m,a,x,x; one more letter (`maxdepth`,
+`maxlen`) makes "max…" a non-prefix and the screen flips back to the raw keys, two characters at
+once ("max" → "maxxd"). Commits are the same as on base (`maxxdepth`), and base already jumps the
+same way for natural `errno` ("ern" → "errno"). A sticky-composed display (once the cancel rule
+showed composed, keep it) was built and measured on the corpus above: habit +0.88 points, but natural
+typing lost 723 tokens across 102 common identifiers (`errno`→`erno` 260, `errstr`, `passthrough`,
+`isspace`, `errmsg`). Rejected.
+
+**Rejected.** A prefix-based commit rule for every cancelled word (changes words whose screen shows
+raw). A word-only display rule (flips the habit wins back to raw mid-word). Protecting `troff` and
+friends in `protectedRealWords` (protected words become prefixes that hijack habit typing; see "Why
+`sysstat` ... NOT protected").
+
+## Commit-time rime completeness
+
+`Phonology.isLegalRime` only rejects an offglide-final nucleus closed by a coda. That is right
+mid-word, where an open `ă` or `iê` is a prefix of the syllable still being typed, but at commit it
+let through syllables Vietnamese never has: `saw`→`să`, `AWS`→`Ắ`, `things`→`thíng`, `disc`→`díc`.
+
+**What changed.** `Phonology.isCompleteRime(nucleus:coda:)`, used only by `Engine.isValid` (commit),
+adds two rules: (a) `ă â oă uâ iê yê uô uyê` need a consonant coda; (b) a bare `i`/`y` takes no `ng`/
+`c` (Vietnamese writes inh/ich). `Engine.isUnrecoverable` (mid-word eager restore) keeps
+`isLegalRime`, so mid-word is byte-identical (`saw` still shows `să` until Space). A lone toneless
+vowel letter with no onset or coda is exempt: it is the letter itself (chữ ă, bảng chữ cái), so
+`aw`/`aa` still commit `ă`/`â`, while `aws`, `saw`, `AWS` restore.
+
+**Measured.** Every onset × nucleus × coda × tone in Telex (standard, tone-before-coda and
+marks-at-end orders) and VNI (standard and digits-at-end), 308,476 typings, base vs branch: every
+change falls under (a) or (b), including `qu`+i/y+ng/c (= rule b), plus the intended glide/VNI fixes
+below. 2,970 real Vietnamese words from the macOS `vi.lproj` strings, typed standard and
+marks-at-end: only `sĩ`, `giấy`, `giây` changed, all fixes. English: `raw`, `things`, `misc`, `RISC`,
+`disc`, `saw` and similar now commit as typed (most of the branch's 1,909 natural tokens fixed
+on the corpus above). A truncated
+Vietnamese form left open at Space (`hoă`, `việ`) now reverts to the raw keys.
+
+**Pinned by** `CommitRimeTests`, `ShippedCommitRimeTests`, and the corpus/`FreeToneMarkTests`
+cases (lone `aa`/`aw`/`a6`/`a8` kept; closed `aan`/`awn`/`hoawcj` added).
+
+## Marks typed at the end of gi- words, and VNI horn on uu
+
+The nucleus-prefix checks in the Telex non-adjacent circumflex path and VNI's 6/7/8 handlers used
+the unfolded vowel run, which includes gi's glide `i`: "iây" is not a nucleus prefix, "ây" is, so
+`giayas` and VNI `giay61` stayed raw. They now use `SyllableOps.foldedNucleusLetters`. The Telex
+circumflex check folds gi only, not qu (`foldingQu: false`): folding qu there turned English `queue`
+into `quêu`, a valid syllable no lexicon could rescue, and fixed no Vietnamese case.
+
+VNI `luu7` stayed raw: the 7 handler tried the last u (`uư`, illegal) and its backward search used
+`lastIndex`, finding the same u again. The search now tries every eligible o/u from the end
+(skipping the qu glide) and the last-vowel branch also requires a nucleus prefix. `luu7`→`lưu`,
+`giua74`→`giữa`. Side effect: `ao7` no longer flashes `aơ` mid-word in either setting, and with
+`allowFreeToneMark` off `luu7` no longer flashes `luư`; commits are unchanged apart from the
+intended `uu7` fixes.
+
+**Measured** in the sweep above: 108 gi-glide typings and 198 VNI `uu7` typings now compose, 0
+regressions. Natural typing of all 235,976 lines of `/usr/share/dict/words`, base vs this whole
+batch of fixes: 83 words fixed (`law`, `saw`, `paw`, `raw`, `disc`, `para`…, all from the rime
+rules), 1 changed for the worse on purpose (`six` → `sĩ`), none from the glide change. Pinned by
+`GlideMarksAtEndTests` and `ShippedGlideMarksTests` (including `queue` staying English).
+
+## Engine edit hardening: multi-character uppercase, grapheme edits, eager restore needs restore
+
+**Multi-character uppercase (crash).** `encode` (a capitalized consonant cell) and `finalize`'s
+`revertToRawUnits` (a capitalized raw revert) built `Character(String.uppercased())`. A letter
+whose uppercase is two characters (`ß` -> "SS", `ŉ` -> "ʼN") traps at runtime, reachable with
+`autoCapitalize` on at a sentence start. The uppercase now stays a String and each Character is
+emitted through `table.plain` (`Engine.uppercasedUnits`). `ßa` + Space gives `SSa`, a raw-reverted
+`ßtext` gives `SStext`. **Pinned by** `UppercaseExpansionTests`.
+
+**Grapheme-aware edits for combining-mark output.** `Engine.diff` and `finalize`'s commit edit
+counted Backspaces in code units. Cocoa text views delete one grapheme (base + marks) per
+Backspace, so with `.unicodeCompound` Telex `tosf` re-rendered the tone as backspaceCount 1 (only
+U+0301 deleted) and the screen showed a stray mark; a restore (`tasks`) deleted too much. Now
+`Engine.edit(from:to:)` decodes the previous and new units and, when either decoded text has
+combining marks (`Character` count != `unicodeScalars` count, decided from the strings, never from
+a table name so a CP1258 that decodes to real combining marks gets it too), diffs in Characters:
+common leading graphemes (compared by scalars, because `Character ==` treats decomposed and
+precomposed as equal), `backspaceCount` = remaining Characters of the previous text, `text` = the
+new text from the first differing grapheme (delete and retype, never edit inside a cluster). The
+macro-expansion path counts the on-screen word the same way. When no combining marks are involved
+the code-unit diff is untouched.
+
+**[VERIFY on device]** An app that deletes per scalar or per UTF-16 unit instead of per grapheme
+would now under-delete with the compound table (for example "tò" -> two cells). Cocoa NSTextView and
+most native fields delete per grapheme; terminals, some Electron/web inputs and games are the ones
+to check.
+
+**Measured.** Compound edits on the base commit (all keystrokes plus Space): `tosf` = `t o ó(combining
+U+0301) then 1:U+0300`; `tasks` ended `2:73.6b.73.20`; `docker` ended `3:309.63.6b.65 4:...`. After:
+`tosf` re-render is `1` Backspace + `o`+U+0300, `vieejt` -> `việt`, `tasks `/`docker `
+restore to the raw text in a grapheme-deleting view. For `.unicode`, `.tcvn3`, `.vniWindows` the
+per-keystroke edits of 10 words x 3 tables are identical to the base commit (30 recorded cases).
+`CodeTableTests.compoundCanonicallyEqualsNFC` had to replay compound output with the new
+`Replayer.runDeletingGraphemes` instead of the scalar replayer, since compound edits now count
+graphemes by design; no other existing test changed.
+
+**Rejected.** Hard-coding `.unicodeCompound`/`.cp1258` in the diff (another table is becoming
+combining-mark output). Always diffing in Characters (it would also be correct for `.unicode`/legacy, but keeping
+those edits byte-identical is what lets the existing corpus and `CodeUnitEditsUnchangedTests` vouch
+for them). Editing inside a cluster (deleting only
+the mark) because the app, not the engine, decides how many scalars one Backspace removes.
+
+**Pinned by** `GraphemeDiffTests` (tosf, hoaf, vieejt, tasks and docker restore, mid-word
+Backspace, multi-word, one-Backspace re-render, macro expansion) and `CodeUnitEditsUnchangedTests`.
+
+**Eager restore needs restoreIfInvalid.** With `spellCheck` on and `restoreIfInvalid` off, `rerender`
+showed raw `docker` (eager restore) but `finalize`, which only restores when `restoreIfInvalid`,
+committed `dỏcke`, so Space changed the word. The eager display and `showsComposedAfterCancel` now
+go through one private `eagerRestoreEnabled = config.spellCheck && config.restoreIfInvalid`. The
+force-English whitelist branch keeps its own `spellCheck`-only gate (it needs no restore). The
+shipped config (both on) is unchanged. `test` is not a display/commit disagreement in either
+config: "tét" is valid so it shows until Space, then the whitelist commits `test`, the known
+valid-compose case. **Pinned by** `EagerRestoreAgreesWithCommitTests` (docker, songss, tassk in
+the shipped and restore-off configs; shipped docker still shows raw).
+
+**Cleanups.** Engine.swift header no longer says Telex-only / `inputMethod` unused (VNI is handled
+in `interpret`) and documents the grapheme exception to "code units". PropertyTests header now says
+Backspace is pressed once per raw keystroke, as the body does.
+
+## Bare q and qu+o/u/ư are invalid at commit time
+
+**What changed.** New pure `Phonology.isLegalQOnset(_:nucleus:)`, called from `Engine.isValid` right after `isLegalOnset`. It rejects (1) onset "q" with no u glide and (2) onset "qu" whose post-fold nucleus starts with plain o, u or ư. `typeShipped("qas")` now gives "qas ", and "quos" gives "quos ". quốc, quân, quờ, quyền, quý, quạ, quê, quay, quầy, quẻo, quăng, quà and quanh are unchanged, in Telex and VNI.
+
+**Why.** `Phonology.onsets` contains "q" and `isLegalOnset` returned true for it, so "qá" and "quó" passed validation. Vietnamese q occurs only as the qu glide onset. qu takes ô/ơ (quốc, quờ) but never quo, quu or quư.
+
+**Rejected alternatives.** Folding the rule into `isLegalOnset` was not rejected for safety: `isLegalOnset` has a single caller, `Engine.isValid`, which runs only at commit time, so the choice does not affect mid-word behaviour either way. The rule is a separate pure function because the spec asks for that: it keeps the q rule explicit, documented and table-testable on its own. Removing "q" from `Phonology.onsets` would also be harmless for the prefix check ("qu".hasPrefix("q") keeps `isOnsetPrefix("q")` true) but is unnecessary, and the eager restore (Engine.swift, uses `onsets`/`isOnsetPrefix` directly) is left untouched, so it stays byte-identical.
+
+**What pins it.** `ShippedQOnsetTests` (screen-level, shipped config, Telex and VNI) and `QOnsetPhonologyTests` (pure table).
+
+**Measurements.** Over onset q/qu × every nucleus × every coda in the Phonology inventories (rime legal and complete), the old rule accepted all 243 q rimes and 243 qu rimes. The new rule accepts 0 q rimes and 105 qu rimes. Rejected qu rimes number 138, and every one has a nucleus starting with o, u or ư: o*, oa*, oe*, oo*, oă*, oai/oao/oay/oeo, u*, ua, ui, uy*, uya, uyu*, uyê*, uâ*, uê*, uô*, uơ, ư*, ưa, ưi, ưu, ươ*. Accepted first letters are a, ă, â, e, ê, i, y, ô, ơ. Tone does not enter, because `toneAllowed` depends only on the coda. No other class changes.
+
+**Side effects, all intended** (each falls in the bare q or qu+o/u/ư class): VNI qo1 -> "qo1 ", qu7a -> "qu7a ", qu7o7 -> "qu7o7 "; Telex quwow -> "quwow " (was "quươ "), qwa -> "qwa "; quick-start w: wos -> "wos " (was "quó "); quickTelex qqos -> "qqos " (was "quó "); English "qere" -> "qere " (was "qể ").
+
+## Tap: re-emit the user's own key for bare appends; reset on tap gaps; Option characters pinned
+
+**What changed.**
+(C) `RepostPolicy.canRepostOriginal(decision:edit:isAutorepeat:)` (pure, Sources/KeystoneInput/RepostPolicy.swift) is true only for `.character(ch)` with `backspaceCount == 0` and `edit.text == String(ch)`, and, when the key is an autorepeat, only if `ch == " "`. In that case `EventTapController.handle` posts `event.copy()` tagged with `selfTag` via `tapPostEvent(proxy)` and returns nil, with no synthetic keyUp (the physical keyUp is outside the tap mask and passes with the real keycode). The tap reads `.keyboardEventAutorepeat` and passes it in. If `copy()` returns nil, it falls back to the synthetic path. Every other edit keeps the old path and its ordering.
+(D) `EventTapController.tapWasInterrupted()` calls `engine.resetBuffer()`. It is called from the callback on `.tapDisabledByTimeout`/`.tapDisabledByUserInput` and from the watchdog when it finds the tap disabled. In the watchdog the reset runs BEFORE `tapEnable`: after re-enabling, the tap thread may already be handling the first key of a new word (a, a -> â), which a late reset would drop. In the callback the order does not matter (same thread).
+(H) Option+char is already `.commitChord` (commit the word, key passes through); now pinned through EngineController and the shipped config.
+(I) Deleted the unused `SystemState` and `SystemStateCache` (and the now-unneeded `import os` in Contracts.swift); no tests referenced them.
+
+**Not a physical passthrough.** The repost does NOT contradict "Do NOT let plain keystrokes bypass the synthetic channel". That rule forbids returning the physical key unsuppressed, because across callbacks it can overtake the Backspaces posted one callback earlier. Here the original is suppressed (`return nil`) and the copy goes through `tapPostEvent`, the same ordered channel as synthetic text, so the cross-callback ordering guarantee is unchanged. Someone "simplifying" this into returning the event unsuppressed would reintroduce the lost-character regression. The earlier statement in "switch-key recording" that a plain character is re-synthesized on a brand new CGEvent with virtualKey 0 now holds only for TRANSFORMED keys (and autorepeat letters); a bare append is a tagged copy of the physical event. Suspending the engine during recording is still required: the copy is tagged `selfTag`, so the recorder's local monitor sees a keycode-correct event only by accident of the tap, and any transformed key is still synthetic.
+
+**Why.** Synthetic text is built as virtual key 0 with an instant keyUp. Web pages saw e.code == "KeyA" for every letter, Space-hold (Figma) saw keyUp with no real keyDown, and Shift flags and autorepeat were lost. A bare append needs no synthesis. During a tap-disabled gap keystrokes reach the app untransformed, so the buffer no longer matches the screen and the next edit would backspace over text never rendered; dropping the buffer (no commit, the screen is not ours to rewrite) resyncs.
+
+**Autorepeat letters stay synthetic (review finding).** The copy keeps autorepeat=1. With ApplePressAndHoldEnabled (macOS default YES) Cocoa text views and Chrome swallow repeats of i/u/y/c/n/l/z/a/e/o/s to show the accent popup, but the engine already counted them as appended, so its buffer ("iiii") diverges from the screen ("i") and the next tone key backspaces the wrong count. Synthetic events carry autorepeat=0, so they never trigger the popup (the pre-change behaviour). Probe: with the shipped config holding i,u,y,c,n,l,z,k makes every repeat a bare append; aaaa/eeee alternate. Space is exempt: no popup exists, and Figma's Space-hold needs the real repeat. The owner's Mac has ApplePressAndHoldEnabled=0, so on-device checks there cannot catch this; the rule is pinned in the pure policy instead.
+
+**"Sửa lỗi gợi ý" decision.** No special case. The placeholder is only sent when `backspaceCount > 0`, so a bare append never used it; a plain insertion already replaces a selected inline-autocomplete suggestion, the same as the physical key would natively. `textOnKeyDownOnly` and `sendEachKeystroke` only shape synthesized events and none are synthesized here. So the repost is correct with the option on or off.
+
+**Rejected.** Reposting any `.character` edit including multi-char or backspace edits (they must rewrite text; a copy cannot carry a different string). Reposting autorepeat letters (press-and-hold desync above). Building a fresh event with the real keycode (loses flags/autorepeat, still needs a keyUp). Committing instead of resetting on a tap gap (would rewrite text the screen never showed). Moving the reset into EngineController (the controller does not know about tap state). Returning the original unsuppressed (known lost-character regression).
+
+**Pinned by.** RepostPolicyTests (8: bare append, uppercase/symbol, backspace, text mismatch, non-character decisions, autorepeat letters refused, autorepeat Space allowed, real engine sequence t,a,s), TapGapTests.interruptionDropsTheComposingWord (calls tapWasInterrupted on a real controller; next `e` after "tie" is a bare append, not a rewrite to "tiê"), OptionCharTests ("users" + Option-@ stays "users" and is not suppressed; "tieengs" + Option-@ gives "tiếng"). The CG glue (copy/post, autorepeat read, watchdog order, callback wiring) is compile-only.
+
+**Stale references to clean up.** DECISIONS.md lines ~2502, ~2565, ~2570 describe `SystemState.secureInputActive` / the tap's `SystemStateCache` in Contracts.swift as existing; both are gone (secure-input state lives in AppModel). HANDOFF.md:46 lists `SystemStateCache` among the module's components; remove it. Hand to the other session: App/AppModel.swift:~443 ("not in the tap's `SystemStateCache`"), App/AppModel.swift:1049-1058 and App/ControlPanel.swift:212-215 (say every plain key is re-synthesized as keyCode 0; now true only for transformed keys and autorepeat letters; the setActive(false) bracket is still needed).
+
+**Measurements.** Full suite 303 + 406 green, 2 known issues (room/door) unchanged.
+
+**[VERIFY on device]** web `e.code` per letter now correct (e.g. KeyA); Figma Space-hold (keyDown Space ... keyUp Space) pans; Shift+Space keeps its flags; held non-letter keys autorepeat; PRESS-AND-HOLD: with `defaults write -g ApplePressAndHoldEnabled -bool true`, hold i/n/a in TextEdit and Chrome, release, then type a tone key: no desync, no popup stuck; no doubled character in Chrome/Excel with "Sửa lỗi gợi ý" on and off; Option+2 types "@" after a word on a non-US layout; typing across a forced tap timeout recovers without garbling; web apps reading event.timeStamp (the copy keeps the original hardware timestamp while synthetic edits are stamped at creation, so timestamps seen by the app may go slightly backwards during fast typing; delivery order is unaffected).
+
+## Regular inflections in the cancel decision: tried, measured, reverted
+
+*(2026-10-17, review item F.)* Natural typing of an inflection that the 1934 Webster list lacks can
+lose a letter after a Telex cancel when the shorter spelling is itself a word: `carries` -> `caries`,
+`presses` -> `preses`, `errs` -> `ers`, `mosses` -> `moses`. A rule that counted a regular inflection
+of a lexicon word (`-ies` -> `-y`, `-es` after s/x/z/ch/sh/o, `-s` after anything else) as a word in
+`chooseAfterCancel` was built, reviewed (its first `-ed`/`-ing` version broke the habit on `need`,
+`based`, `losing` and was cut), and measured on the 3.25M-token man-page/code corpus of "Space commits
+what the cancel rule showed": natural +54 tokens (`carries` 34, `presses` 19, `errs` 1), OpenKey habit
+-369 tokens (`series` -> `serries` 158, `chars` -> `charrs` 169, `bases` -> `basses` 34, `curs`,
+`cars`). The habit spelling of a common plural IS the natural spelling of another inflection
+(serries = serry + ies, charrs = charr + s), so keystrokes cannot tell them apart, and every suffix
+subset loses too. Reverted; `carries`/`presses`/`errs` stay known natural costs.

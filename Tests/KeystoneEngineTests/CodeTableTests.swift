@@ -35,7 +35,9 @@ import Testing
         let nfcCase = CorpusCase(name: "nfc-\(keys)", keys: keys, codeTable: "unicode", expected: "")
         let compoundCase = CorpusCase(name: "compound-\(keys)", keys: keys, codeTable: "unicodeCompound", expected: "")
         let nfc = Replayer.run(nfcCase)
-        let compound = Replayer.run(compoundCase)
+        // Compound output has combining marks, so the engine counts Backspaces in
+        // graphemes (see GraphemeDiffTests); replay it the way a Cocoa view deletes.
+        let compound = Replayer.runDeletingGraphemes(keys: keys, config: compoundCase.engineConfig)
 
         #expect(
             compound.precomposedStringWithCanonicalMapping == nfc,

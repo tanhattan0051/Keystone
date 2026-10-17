@@ -42,7 +42,30 @@ enum Phonology {
             // .e covers both e and ê; g never legally precedes either.)
             return v != .e
         case "q", "qu":
-            return true   // qu is followed by a glide; handled at parse time
+            // Always passes here; the commit-time q/qu rules live in `isLegalQOnset`.
+            return true
+        default:
+            return true
+        }
+    }
+
+    /// Commit-time rule for the q onsets, on top of `isLegalOnset`:
+    ///  - bare "q" is invalid: Vietnamese q is only ever the "qu" glide onset
+    ///    (qua, quê), so "qas" -> "qá" is a typo or an English word, not a syllable;
+    ///  - "qu" cannot be followed by a plain o, u or ư: the o/ơ/ô nuclei exist
+    ///    only as quơ/quờ/quốc (marked), never as quo/quu/quư.
+    /// A separate pure function keeps the q rule explicit and testable on its
+    /// own. Only `Engine.isValid` (commit time) calls it; the mid-word eager
+    /// restore uses `onsets`/`isOnsetPrefix`, so mid-word behaviour cannot change.
+    /// `nucleus` is the written nucleus without tone (Parsed.nucleusString), so a
+    /// marked ô/ơ is a different first letter from plain "o".
+    static func isLegalQOnset(_ onset: String, nucleus: String) -> Bool {
+        switch onset {
+        case "q":
+            return false
+        case "qu":
+            guard let first = nucleus.first else { return true }
+            return first != "o" && first != "u" && first != "ư"
         default:
             return true
         }
@@ -121,6 +144,32 @@ enum Phonology {
     static func isLegalRime(nucleus: String, coda: String) -> Bool {
         if coda.isEmpty { return true }
         return !openOnlyNuclei.contains(nucleus)
+    }
+
+    /// Nuclei that Vietnamese never writes open: they need a consonant coda
+    /// (ăn, ân, hoặc, khuân, tiếng, yên, muốn, khuyên). `âu`/`ây` are separate
+    /// nuclei and are not affected; an open `ươ` is already downgraded to `uơ`
+    /// before validation, so it is not listed.
+    static let closedOnlyNuclei: Set<String> = [
+        "ă", "â", "oă", "uâ", "iê", "yê", "uô", "uyê",
+    ]
+
+    /// Commit-time rime validity: `isLegalRime` plus the rules that only make
+    /// sense once the word is finished.
+    ///
+    /// Why two rime predicates: mid-word, an open `ă`/`iê` is just a prefix of
+    /// the syllable still being typed (tieeng → "tiê" → tiêng), so
+    /// `Engine.isUnrecoverable` (mid-word eager restore) keeps the permissive
+    /// `isLegalRime`. At commit nothing more will arrive, so a syllable like
+    /// "să" (saw), "díc" (disc) or "thíng" (things) is certainly not a finished
+    /// Vietnamese word and is rejected here (used only by `Engine.isValid`,
+    /// which exempts a lone toneless vowel letter such as "ă").
+    static func isCompleteRime(nucleus: String, coda: String) -> Bool {
+        guard isLegalRime(nucleus: nucleus, coda: coda) else { return false }
+        if coda.isEmpty { return !closedOnlyNuclei.contains(nucleus) }
+        // Vietnamese writes inh/ich after a bare i/y, never ing/ic.
+        if (nucleus == "i" || nucleus == "y"), coda == "ng" || coda == "c" { return false }
+        return true
     }
 
     // MARK: Tone restriction (§5.4)

@@ -29,8 +29,31 @@ public final class EngineController: @unchecked Sendable {
         }
     }
 
+    /// Drops the composing word without committing it. For app switches and
+    /// similar, where the text on screen is no longer ours to rewrite; a click
+    /// or chord inside the same app uses `handleMouseDown()` / `handle(_:)`,
+    /// which commit the word.
     public func resetBuffer() {
         lock.withLock { engine.reset() }
+    }
+
+    /// A mouse press moves the caret somewhere the engine cannot see, so the
+    /// word being composed is finalized first (same as an arrow key) — a bare
+    /// reset would leave whatever the last mid-word render showed as final
+    /// text ("test" -> "tét"). Returns the edit to post BEFORE the click
+    /// passes through, or nil when there is nothing to rewrite. While
+    /// Vietnamese is off there is no composed text on screen to finalize, so
+    /// the English-mode macro buffer is just cleared.
+    public func handleMouseDown() -> EngineResult? {
+        lock.withLock {
+            guard active else {
+                engine.reset()
+                return nil
+            }
+            let r = engine.flushCaretMove()
+            let noop = r.backspaceCount == 0 && r.text.isEmpty
+            return noop ? nil : r
+        }
     }
 
     /// Installs (or clears, with `nil`) the English word list `Engine.finalize`
@@ -80,10 +103,12 @@ public final class EngineController: @unchecked Sendable {
                     let r = engine.flushInactiveNewline()
                     let noop = r.backspaceCount == 0 && r.text.isEmpty
                     return (false, noop ? nil : r, d)
-                case .resetPassthrough:
+                case .commitChord, .passthrough:
+                    // A function key can move focus just like a chord (F1 opens
+                    // the owner's iTerm2 panel), so the macro buffer must not
+                    // survive it: a trigger completed after it would backspace
+                    // into the newly focused app.
                     engine.resetInactive()
-                    return (false, nil, d)
-                case .passthrough:
                     return (false, nil, d)
                 }
             }
@@ -128,11 +153,15 @@ public final class EngineController: @unchecked Sendable {
                 let r = engine.flushNewline()
                 let noop = r.backspaceCount == 0 && r.text.isEmpty
                 return (false, noop ? nil : r, d)   // finalize word + start new sentence, let Return pass through
-            case .resetPassthrough:
-                engine.reset()
-                return (false, nil, d)
-            case .passthrough:
-                return (false, nil, d)
+            case .commitChord, .passthrough:
+                // A chord may move the caret, paste, undo or switch apps; a
+                // function key may focus another window (F1 is the owner's
+                // floating-panel hotkey). Either way the word must not stay
+                // composing, or the next letter would backspace into
+                // whatever now has focus. Same shape as .commitCaretMove.
+                let r = engine.flushCaretMove()
+                let noop = r.backspaceCount == 0 && r.text.isEmpty
+                return (false, noop ? nil : r, d)
             }
         }
     }

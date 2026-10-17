@@ -362,7 +362,7 @@ struct AutoCapitalizeTerminatorNeedsWhitespaceTests {
     }
 
     @Test func resetCancelsAPendingTerminator() {
-        // `Engine.reset()` (mouse click / app switch / Cmd-Ctrl-Option chord) has no actual
+        // `Engine.reset()` (app switch / keyboard-focus change / deactivation) has no actual
         // information that the next word starts a sentence, so it clears a
         // pending terminator along with the raw-key buffer.
         let result = typeWithEnter(on) { engine, apply in
@@ -408,7 +408,7 @@ private func typeInactiveWithReset(
 }
 
 // `Engine.resetInactive()` (English mode; fired by Cmd/Ctrl/Option chords
-// such as Cmd+V or Option+←) used to only clear the raw-key buffer, leaving
+// such as Cmd+V or Option+←, and by function keys) used to only clear the raw-key buffer, leaving
 // `sentencePosition` untouched — so a pending "." or a fresh engine's
 // initial sentence start survived a reset and still capitalized the next
 // macro, unlike Vietnamese mode's `reset()`, which already clears it. See
@@ -460,8 +460,9 @@ struct EnglishModeResetClearsSentenceStartTests {
 // DECISIONS.md "Auto-capitalize: dấu kết câu phải có khoảng trắng theo sau"
 // decision A. Regression found replaying identical keystrokes against
 // e50c3ad and against base (English mode): a terminator typed right after a
-// reset (mouse click, app/keyboard-focus switch, a Cmd/Ctrl/Option chord, or
-// Vietnamese off→on) could never confirm any more, because `reset()`/
+// reset (at the time: mouse click, app/keyboard-focus switch, a Cmd/Ctrl/Option
+// chord, or Vietnamese off→on; a click or chord while active now commits via
+// `flushCaretMove()`, which lands on the same `.afterReset`) could never confirm any more, because `reset()`/
 // `resetInactive()` cleared the glue along with everything else — even
 // though the engine genuinely has no idea whether real text (pasted text,
 // pre-existing text, a word typed while Vietnamese was off) sits right
@@ -475,7 +476,7 @@ struct AutoCapitalizeResetAssumesTextBeforeCaretTests {
     @Test func terminatorReachedRightAfterAResetCanStillConfirm() {
         let result = typeWithEnter(on) { engine, apply in
             for ch in "hoa" { apply(engine.process(KeyInput(ch))) }
-            engine.reset()   // mouse click / app switch / Cmd-Ctrl-Option chord
+            engine.reset()   // app switch / keyboard-focus change / deactivation
             for ch in ". lan " { apply(engine.process(KeyInput(ch))) }
         }
         #expect(result == "hoa. Lan ")

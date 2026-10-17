@@ -1,6 +1,8 @@
 [
-  { "name": "circumflex a", "keys": "aa", "method": "telex", "orthography": "modern", "restoreIfInvalid": true, "expected": "â" },
-  { "name": "breve a", "keys": "aw", "method": "telex", "orthography": "modern", "restoreIfInvalid": true, "expected": "ă" },
+  { "name": "circumflex a (lone letter)", "keys": "aa", "method": "telex", "orthography": "modern", "restoreIfInvalid": true, "expected": "â" },
+  { "name": "breve a (lone letter)", "keys": "aw", "method": "telex", "orthography": "modern", "restoreIfInvalid": true, "expected": "ă" },
+  { "name": "circumflex a", "keys": "aan", "method": "telex", "orthography": "modern", "restoreIfInvalid": true, "expected": "ân" },
+  { "name": "breve a", "keys": "awn", "method": "telex", "orthography": "modern", "restoreIfInvalid": true, "expected": "ăn" },
   { "name": "circumflex e", "keys": "ee", "method": "telex", "orthography": "modern", "restoreIfInvalid": true, "expected": "ê" },
   { "name": "circumflex o", "keys": "oo", "method": "telex", "orthography": "modern", "restoreIfInvalid": true, "expected": "ô" },
   { "name": "horn o", "keys": "ow", "method": "telex", "orthography": "modern", "restoreIfInvalid": true, "expected": "ơ" },

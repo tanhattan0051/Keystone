@@ -30,10 +30,11 @@ struct SentencePosition: Equatable {
     static let sentenceStart = SentencePosition(settled: .sentenceStart, pending: nil, gluedToText: false)
     static let midSentence   = SentencePosition(settled: .midSentence,   pending: nil, gluedToText: false)
 
-    /// The position right after `Engine.reset()`/`resetInactive()` (a mouse
-    /// click, an app/keyboard-focus switch, a Cmd/Ctrl/Option chord, or
+    /// The position right after `Engine.reset()`/`resetInactive()` (an
+    /// app/keyboard-focus switch, an English-mode chord or function key, or
     /// deactivation — `EngineController.setActive(false)`, Vietnamese
-    /// on→off). Unlike a brand-new `Engine`, a reset does NOT
+    /// on→off), and after `flushCaretMove()` (arrows, and a click, chord or
+    /// function key while Vietnamese is on, which commit the word first). Unlike a brand-new `Engine`, a reset does NOT
     /// mean the caret sits at the true start of a document — there may be
     /// pasted text, pre-existing text, or a word typed while Vietnamese was
     /// off sitting right before it, invisible to the engine either way.

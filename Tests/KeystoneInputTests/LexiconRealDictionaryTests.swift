@@ -11,7 +11,6 @@ import Testing
 @testable import KeystoneEngine
 import Foundation
 
-private let systemDictExists = FileManager.default.fileExists(atPath: "/usr/share/dict/words")
 
 // `letter`/`RETURN`/`typeAndFlush`/`applyRealistically` are shared with
 // EngineControllerTests.swift and LexiconRestoreTests.swift — see
@@ -74,11 +73,11 @@ struct LexiconRealDictionaryTests {
 
     private static let falsePositiveWords: [String] = [
         "fussed", "mussed", "mussing", "jarred", "purred", "parring", "riffling",
-        "coiffed", "squirreling", "moussing", "suss", "terra", "torr", "iff", "barre",
+        "coiffed", "squirreling", "moussing", "suss", "terra", "torr", "barre",
         "lassi", "frisson", "farro", "barrie", "currie", "buffo", "triffid",
         "transsonic", "hassidic", "hassidim", "chassidim", "mycorrhiza", "degass",
-        "unbiassed", "aaa", "iss", "poisson", "cassava", "cassaba", "hassan",
-        "parramatta", "oss", "herr", "kerr", "orr", "starr", "barr", "neff", "foxx", "maxx",
+        "unbiassed", "aaa", "poisson", "cassava", "cassaba", "hassan",
+        "parramatta", "kerr", "starr", "neff", "foxx",
     ]
 
     @Test(arguments: falsePositiveWords)

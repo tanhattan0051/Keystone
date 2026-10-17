@@ -176,7 +176,10 @@ public struct EngineConfig: Sendable, Equatable, Codable {
     /// the word boundary and gates on merely "currently invalid," not
     /// "dead") — it lets an English word like `docker`/`vmware`/`faster`
     /// show as itself while typing, instead of flashing pseudo-Vietnamese
-    /// until Space. Default false keeps the corpus and every existing test
+    /// until Space. Takes effect only while `restoreIfInvalid` is also on:
+    /// with restore off the commit keeps the composed word, so showing raw
+    /// keys mid-word would make Space change what the screen showed.
+    /// Default false keeps the corpus and every existing test
     /// byte-identical; see DECISIONS.md "Eager restore (spellCheck / Phase
     /// 7)" for the dead-vs-merely-invalid distinction and the safety
     /// guarantee (every real Vietnamese word renders identically on or off).
@@ -233,7 +236,10 @@ public struct KeyInput: Sendable, Equatable {
 }
 
 /// The engine's instruction to the input layer: delete `backspaceCount` code
-/// units of the active table, then type `text`.
+/// units of the active table, then type `text`. Exception: when the on-screen
+/// or new text contains combining marks (`.unicodeCompound`), the count is in
+/// graphemes, because a text view deletes a whole base+marks cluster per
+/// Backspace (see DECISIONS.md "Engine edit hardening").
 public struct EngineResult: Sendable, Equatable {
     public var backspaceCount: Int
     public var text: String

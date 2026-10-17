@@ -4,10 +4,10 @@
 // 1. NFC idempotence: the engine's output for a set of valid Telex words must
 //    already be in precomposed (NFC) form — no stray combining marks or
 //    decomposed sequences should ever reach the screen.
-// 2. Backspace-to-empty: typing a word then pressing Backspace once per
-//    on-screen scalar must always empty the buffer, regardless of how many
-//    raw keystrokes it took to build that word (quality marks / tone marks
-//    collapse multiple raw keys into fewer on-screen scalars).
+// 2. Backspace-to-empty: typing a word then pressing Backspace once per RAW
+//    KEYSTROKE (not once per on-screen scalar: quality and tone keys collapse
+//    several raw keys into fewer scalars, and Backspace undoes one raw key and
+//    re-derives the syllable) must always leave nothing on screen.
 
 import Foundation
 import Testing

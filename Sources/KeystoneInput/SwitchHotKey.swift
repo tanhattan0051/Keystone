@@ -46,7 +46,7 @@ public struct SwitchHotKey: Equatable, Sendable, Codable {
     ///   2. If a key IS attached, Shift can't be the only modifier: Shift+key
     ///      is ordinary typing that the engine already processes (see
     ///      `KeyTranslator.decide` — only command/control/option force
-    ///      `.resetPassthrough`), so a Shift-only+key combo would silently
+    ///      `.commitChord`), so a Shift-only+key combo would silently
     ///      eat every such keystroke instead of typing it.
     public var validationError: String? {
         if modifiers.isEmpty {

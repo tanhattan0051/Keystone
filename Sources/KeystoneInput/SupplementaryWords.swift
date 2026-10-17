@@ -190,6 +190,8 @@ public enum SupplementaryWords {
         // Common Webster-missing inflections, not derived from the above.
         "tasks", "passed", "errors", "fixes", "offsets", "hashes",
         "processes", "processed", "files", "users",
+        // Habit-cancel targets (`hass`, `ussing`, `usses`): the composed word must be a WORD to win.
+        "has", "using", "uses",
     ]
 
     /// Real, OLD English words — inflections, loanwords, acronyms, surnames
@@ -198,7 +200,7 @@ public enum SupplementaryWords {
     /// letter) form happens to already be a different real word in the
     /// system list, so typing the word NATURALLY (raw) would otherwise lose
     /// to that unrelated word — `fussed`→`fused`, `jarred`→`jared`,
-    /// `OSS`→`OS`, `Herr`→`Her`, `Kerr`→`Ker`. Adding them here makes `raw`
+    /// `Kerr`→`Ker`. Adding them here makes `raw`
     /// itself recognized, so `RestoreDecision.choose`'s `!lexicon.contains(raw)`
     /// requirement keeps `.raw` winning — exactly HEAD's (pre-lexicon)
     /// behavior for these words. This list protects RAW typing; `all` above
@@ -207,13 +209,20 @@ public enum SupplementaryWords {
     /// note: a real word missing from BOTH lists can still collapse this way
     /// — this list covers the cases an exhaustive search actually found, not
     /// every English word.
+    ///
+    /// Deliberately NOT protected: `iss`, `iff`, `orr`, `herr`, `oss`, `barr`, `maxx`. Protecting
+    /// a word makes its RAW spelling a dictionary word, and for these the raw spelling is exactly
+    /// what the OpenKey habit-cancel types (`i` `s` shows `í`, the second `s` cancels it to `is`,
+    /// Space). Protected, the habit committed `iss`; now it commits `is`/`if`/`or`/`her`/`os`/
+    /// `bar`/`max`. Accepted cost: typing the rare words `Herr`, `OSS`, `Barr`, `Maxx` naturally
+    /// commits the shorter word. Same trade-off as `sysstat` (see the `sys*` note above).
     public static let protectedRealWords: [String] = [
         "fussed", "mussed", "mussing", "jarred", "purred", "parring", "riffling",
-        "coiffed", "squirreling", "moussing", "suss", "terra", "torr", "iff", "barre",
+        "coiffed", "squirreling", "moussing", "suss", "terra", "torr", "barre",
         "lassi", "frisson", "farro", "barrie", "currie", "buffo", "triffid",
         "transsonic", "hassidic", "hassidim", "chassidim", "mycorrhiza", "degass",
-        "unbiassed", "aaa", "iss", "poisson", "cassava", "cassaba", "hassan",
-        "parramatta", "oss", "herr", "kerr", "orr", "starr", "barr", "neff", "foxx", "maxx",
+        "unbiassed", "aaa", "poisson", "cassava", "cassaba", "hassan",
+        "parramatta", "kerr", "starr", "neff", "foxx",
     ]
 
     /// Force-English whitelist (Lớp B): English words whose Telex keystrokes ALSO
@@ -226,7 +235,12 @@ public enum SupplementaryWords {
     /// only real Lớp B words — a word that already types as itself, or reverts via
     /// restore-if-invalid, does not belong here. All lowercase, no duplicates,
     /// disjoint from `all`/`protectedRealWords`.
+    ///
+    /// `six` was removed: `sĩ` (bác sĩ, ca sĩ, nghệ sĩ) is far too common to shadow. `box` (bõ)
+    /// and `row` (rơ) are rare Vietnamese words, kept on purpose; `rơ` stays typeable as `r[`
+    /// or `ro[`, while `bõ` is only reachable by typing another tone first and then `x` (bofx,
+    /// bojx, borx, bosx; pinned in `ShippedWordListTests`).
     public static let forceEnglishWords: [String] = [
-        "reset", "test", "row", "box", "six", "refer", "defer",
+        "reset", "test", "row", "box", "refer", "defer",
     ]
 }
