@@ -92,6 +92,10 @@ private struct BasicPane: View {
 
             Section("Tuỳ chọn gõ") {
                 Toggle("Kiểm tra chính tả", isOn: $model.spellCheck)
+                    .disabled(!model.restoreIfInvalid)
+                Text("Hiện chữ thô ngay khi đang gõ nếu từ không thể thành tiếng Việt hợp lệ (docker, vmware). Cần bật “Tự khôi phục phím với từ sai”.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Toggle("Tự khôi phục phím với từ sai", isOn: $model.restoreIfInvalid)
                 Toggle("Giữ từ tiếng Anh đang hiển thị (dùng từ điển)", isOn: $model.useLexicon)
                     .disabled(!model.restoreIfInvalid)

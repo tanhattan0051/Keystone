@@ -451,7 +451,7 @@ final class AppModel {
     /// macOS Secure Input is on system-wide, so the tap receives NO keystrokes
     /// and Vietnamese can't work in any app until its holder leaves the
     /// field/tab. Mirrors `secureInputTracker` for the UI; polled by
-    /// `refreshSecureInput()`. Lives here, not in the tap's `SystemStateCache`,
+    /// `refreshSecureInput()`. Lives here, not in any tap-side state,
     /// because a blind tap can't be the one to report it. See DECISIONS.md
     /// "Secure Input: phát hiện và báo".
     private(set) var secureInputActive = false
