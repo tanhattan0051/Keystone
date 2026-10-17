@@ -11,7 +11,6 @@ import Testing
 @testable import KeystoneEngine
 import Foundation
 
-private let systemDictExists = FileManager.default.fileExists(atPath: "/usr/share/dict/words")
 
 // `letter`/`RETURN`/`typeAndFlush`/`applyRealistically` are shared with
 // EngineControllerTests.swift and LexiconRestoreTests.swift — see
