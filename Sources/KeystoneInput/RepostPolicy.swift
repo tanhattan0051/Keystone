@@ -19,8 +19,17 @@ public enum RepostPolicy {
     /// `backspaceCount > 0` (see `KeystrokeExecutor.execute`), a plain insertion
     /// already replaces a selected inline suggestion, and `textOnKeyDownOnly` /
     /// `sendEachKeystroke` only shape synthesized events, of which there are none.
-    public static func canRepostOriginal(decision: KeyDecision, edit: EngineResult) -> Bool {
+    ///
+    /// Autorepeat letters are never reposted: the copy keeps autorepeat=1, so with
+    /// ApplePressAndHoldEnabled (macOS default) Cocoa/Chrome swallow the repeat to
+    /// show the accent popup while the engine already counted it as appended, and
+    /// the buffer desyncs from the screen. Synthetic events carry autorepeat=0, so
+    /// they never trigger the popup. Space is exempt: it has no popup and Figma's
+    /// Space-hold needs the real repeat.
+    public static func canRepostOriginal(decision: KeyDecision, edit: EngineResult,
+                                         isAutorepeat: Bool = false) -> Bool {
         guard case .character(let ch) = decision else { return false }
+        if isAutorepeat && ch != " " { return false }
         return edit.backspaceCount == 0 && edit.text == String(ch)
     }
 }

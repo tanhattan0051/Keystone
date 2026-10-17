@@ -150,8 +150,10 @@ public final class EventTapController: @unchecked Sendable {
         w.setEventHandler { [weak self] in
             guard let self, let p = self.tapPort else { return }
             if !CGEvent.tapIsEnabled(tap: p) {
-                CGEvent.tapEnable(tap: p, enable: true)
+                // Reset BEFORE re-enabling: afterwards the tap thread may already
+                // be handling the first key of a new word, which the reset would drop.
                 self.tapWasInterrupted()
+                CGEvent.tapEnable(tap: p, enable: true)
             }
         }
         w.resume()
@@ -212,10 +214,14 @@ public final class EventTapController: @unchecked Sendable {
         // recoverable by the user; a silently eaten keystroke is not.
         let raw = makeRawKey(event)
         let (suppress, edit, decision) = engine.handle(raw)
-        if let edit, RepostPolicy.canRepostOriginal(decision: decision, edit: edit) {
+        let isAutorepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+        if let edit, RepostPolicy.canRepostOriginal(decision: decision, edit: edit, isAutorepeat: isAutorepeat) {
             // The edit is just the typed character: re-emit the user's own
             // event (keeps keycode, flags, autorepeat) tagged as ours, and
-            // swallow the original. No synthetic keyUp: the physical keyUp
+            // swallow the original. This is NOT a physical passthrough: the
+            // copy goes through the same ordered tapPostEvent channel as
+            // synthetic text (DECISIONS.md, "Do NOT let plain keystrokes
+            // bypass the synthetic channel"). No synthetic keyUp: the physical keyUp
             // is outside the tap's mask and passes with the real keycode.
             if let copy = event.copy() {
                 copy.setIntegerValueField(.eventSourceUserData, value: Self.selfTag)

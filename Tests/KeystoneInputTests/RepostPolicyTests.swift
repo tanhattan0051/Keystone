@@ -1,6 +1,6 @@
 // RepostPolicyTests.swift — pins when the tap may re-emit the user's own
-// physical key instead of synthesizing a text event (DECISIONS.md, "Re-emit the
-// original key when the edit is just that key").
+// physical key instead of synthesizing a text event (DECISIONS.md, "Tap: re-emit the
+// user's own key for bare appends; reset on tap gaps; Option characters pinned").
 
 import Testing
 @testable import KeystoneInput
@@ -40,6 +40,20 @@ struct RepostPolicyTests {
         for d in others {
             #expect(!RepostPolicy.canRepostOriginal(decision: d, edit: edit(0, "a")))
         }
+    }
+
+    @Test func autorepeatedLettersStaySyntheticSoPressAndHoldPopupCannotFire() {
+        // A reposted repeat keeps autorepeat=1; Cocoa/Chrome then swallow it for the
+        // accent popup while the engine counts it as appended.
+        for ch in "iuycnlzaeos" {
+            #expect(!RepostPolicy.canRepostOriginal(decision: .character(ch), edit: edit(0, String(ch)), isAutorepeat: true))
+            #expect(RepostPolicy.canRepostOriginal(decision: .character(ch), edit: edit(0, String(ch)), isAutorepeat: false))
+        }
+    }
+
+    @Test func autorepeatedSpaceIsStillReposted() {
+        // Space has no accent popup and Figma's Space-hold needs the real repeat.
+        #expect(RepostPolicy.canRepostOriginal(decision: .character(" "), edit: edit(0, " "), isAutorepeat: true))
     }
 
     @Test func realEngineSequenceMarksOnlyTheBareAppends() {
