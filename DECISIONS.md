@@ -2346,7 +2346,7 @@ Vietnamese syllable, so it can safely revert to raw keystrokes — `docker`
 composes to the dead `dỏcke`, `task` to the invalid `ták`. But a second,
 disjoint class of English word exists that neither of those features can ever
 touch: one whose Telex keystrokes compose a syllable that IS phonologically
-legal Vietnamese. `test`→`tét`, `reset`→`rết`, `six`→`sĩ`, `box`→`bõ`,
+legal Vietnamese. `test`→`tét`, `reset`→`rết`, `box`→`bõ`,
 `row`→`rơ` are all valid Vietnamese syllables, so `isValid` says yes,
 `isUnrecoverable` says "never dead", and the word stays Vietnamese all the
 way to commit — today, with no code change, that's actually correct: nothing
@@ -2357,7 +2357,7 @@ solves, not something the previous two features overlooked.
 
 **Why not just "prefer English when the composition also happens to be a
 real English word"?** That was the obvious first design and it's wrong: the
-same Telex shape that makes `test`/`reset`/`six` look like English also makes
+same Telex shape that makes `test`/`reset` look like English also makes
 extremely common Vietnamese words look like English. `car`→`cả`, `cow`→`cơ`,
 `bee`→`bê`, `bus`→`bú` are everyday Vietnamese words the user types
 constantly, and `car`/`cow`/`bee`/`bus` are all real English words too — a
@@ -2372,7 +2372,7 @@ not a rule.
 
 **The tradeoff, stated plainly.** Every entry in
 `SupplementaryWords.forceEnglishWords` is a deliberate decision to SHADOW a
-Vietnamese homograph: typing `test`/`reset`/`row`/`box`/`six`/`refer`/`defer`
+Vietnamese homograph: typing `test`/`reset`/`row`/`box`/`refer`/`defer`
 in actual Vietnamese prose (rare, but not impossible) will now render the
 English word instead. This is only acceptable because each entry was chosen
 for having English usage that vastly outweighs its Vietnamese collision in
@@ -2386,6 +2386,21 @@ ordinary restore-if-invalid already loses to Vietnamese for a different
 reason and doesn't need this mechanism either). `ForceEnglishListIntegrity`'s
 `everyEntryIsAGenuineVietnameseHomographCollision` test enforces exactly
 this, so the list can't silently accumulate dead weight.
+
+**`six` was dropped; `box`/`row` are kept knowingly.** `six` was originally listed, but it made
+`sĩ` (bác sĩ, ca sĩ, nghệ sĩ) untypeable (`typeShipped("six") == "six "`), far too high a price
+for a word that is also easy to type in English by other means. It now gives `sĩ `. `box` (bõ) and
+`row` (rơ) stay because the owner seeded them and the Vietnamese words are rare. `rơ` is still
+typeable as `r[` / `ro[`; `bõ` is only reachable by typing another tone first and then `x`
+(bofx, bojx, borx, bosx). Pinned in `ShippedWordListTests`.
+
+**Habit-cancel words removed from `protectedRealWords`.** `iss`, `iff`, `orr`, `herr`, `oss`,
+`barr`, `maxx` made the RAW spelling of the OpenKey habit-cancel (type i-s, see `í`, press s again,
+see `is`, Space) a dictionary word, so Space committed `iss` instead of `is`. They are removed;
+the habit now commits `is`/`if`/`or`/`her`/`os`/`bar`/`max`. Accepted cost: typing the rare words
+naturally (Herr, OSS, Barr, Maxx) commits the shorter word. `has`, `using`, `uses` were added to
+the inflections list so the habit (`hass`, `ussing`, `usses`) wins there too. Natural `has` still
+types `há` (valid Vietnamese syllable; a known limit).
 
 **Mechanism: gated under `spellCheck`, decided in `finalize`, wins over
 everything else.** Unlike eager restore (which hooks `rerender`, mid-word),
@@ -2451,7 +2466,7 @@ restore still land the correct final English word.
 and `literalAfterCancel`). This matters because a word that should start with a
 literal "dd" has no other route: bare `ddos` is the extremely common Vietnamese
 word `đó` (`dd`+`o`+`s`→sắc — identical keystrokes), so we can NOT force it to
-English without breaking `đó` (same class as `six`↔`sĩ`, see "Force-English
+English without breaking `đó` (same class as `box`↔`bõ`, see "Force-English
 whitelist"). The user types `dddos` to mean "ddos" (e.g. DDoS).
 
 The bug: `finalize`'s revert-to-raw and `rerender`'s eager restore both render

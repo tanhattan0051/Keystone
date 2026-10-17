@@ -106,7 +106,7 @@ Cùng với **self-tag** chống xử lý lại chính event mình sinh ra, **kh
   DECISIONS.md "Eager restore (spellCheck / Phase 7)".
 - **Danh sách từ tiếng Anh ưu tiên (khi Kiểm tra chính tả bật):** một số từ tiếng Anh gõ Telex ra
   đúng một âm tiết tiếng Việt hợp lệ nên không bao giờ tự khôi phục được — `test`→`tét`, `reset`→`rết`,
-  `six`→`sĩ`, `box`→`bõ`, `row`→`rơ`. Với một danh sách nhỏ, chọn lọc thủ công các từ này, chữ tiếng Anh
+  `box`→`bõ`, `row`→`rơ`. Với một danh sách nhỏ, chọn lọc thủ công các từ này, chữ tiếng Anh
   thô sẽ thắng thay vì chữ tiếng Việt trùng gõ — CHỈ áp dụng đúng những từ trong danh sách, không phải
   quy tắc chung (quy tắc chung sẽ làm hỏng việc gõ từ tiếng Việt thường dùng như `cả` qua "car", `cơ`
   qua "cow", `bê` qua "bee"). Xem DECISIONS.md "Force-English whitelist (Lớp B)".

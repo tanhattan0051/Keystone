@@ -238,7 +238,8 @@ public enum SupplementaryWords {
     ///
     /// `six` was removed: `sĩ` (bác sĩ, ca sĩ, nghệ sĩ) is far too common to shadow. `box` (bõ)
     /// and `row` (rơ) are rare Vietnamese words, kept on purpose; `rơ` stays typeable as `r[`
-    /// or `ro[`, while `bõ` has no other key sequence (pinned in `ShippedWordListTests`).
+    /// or `ro[`, while `bõ` is only reachable by typing another tone first and then `x` (bofx,
+    /// bojx, borx, bosx; pinned in `ShippedWordListTests`).
     public static let forceEnglishWords: [String] = [
         "reset", "test", "row", "box", "refer", "defer",
     ]

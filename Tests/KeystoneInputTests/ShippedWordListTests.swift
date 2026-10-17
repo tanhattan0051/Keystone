@@ -52,7 +52,6 @@ struct ShippedWordListTests {
     @Test(arguments: [("Herr", "Her"), ("OSS", "OS"), ("Barr", "Bar"), ("Maxx", "Max")])
     func rareNaturalWordsNowCommitTheShorterWord(raw: String, committed: String) {
         let screen = typeShipped(raw)
-        print("NATURAL", raw, "->", screen)
         #expect(screen == committed + " ")
     }
 
@@ -65,10 +64,9 @@ struct ShippedWordListTests {
 
     // Reported, not decided: the owner seeded "box" and "row" knowingly. This pins which other
     // Telex key sequences still produce the shadowed Vietnamese words (all 2-4 key sequences
-    // starting with b / r over a-z, [ and ]; clean spellings only matter, see below).
+    // starting with b / r over the Telex-relevant keys a e o u w [ ] z and the tone keys s f r x j; clean spellings only matter, see below).
     @Test func shadowedVietnameseWordsStillHaveAnotherSpelling() {
         let found = shadowedSpellings()
-        print("SHADOW-PROBE", found)
         // rơ: "r[" and "ro[" are the clean spellings; "r[" + a tone key + z is a tone-then-clear
         // detour. bõ: no clean spelling; "bo" + a tone key + "x" only works by re-toning an
         // already-toned o (a tone overwrite, not a deliberate spelling).
@@ -79,7 +77,7 @@ struct ShippedWordListTests {
 
     private func shadowedSpellings() -> [String: [String]] {
         let targets: Set<String> = ["bõ", "rơ"]
-        let letters = Array("abcdefghijklmnopqrstuvwxyz[]")
+        let letters = Array("aeouw[]sfrxjz")
         var candidates: [String] = []
         for first in ["b", "r"] {
             for a in letters {
