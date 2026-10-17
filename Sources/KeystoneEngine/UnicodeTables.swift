@@ -15,9 +15,9 @@
 // test), just spelled with more code units.
 //
 // Live typing: because of the canonical order, adding a dot-below tone to ậ ặ ệ ộ
-// now needs a mark-level Backspace (the circumflex/breve moves after the dot).
-// That depends on the grapheme-aware diff (session "sửa nhóm lỗi tiếng Anh",
-// item B); do not merge before it lands.
+// moves the circumflex/breve after the dot. The engine's grapheme-aware diff
+// retypes the whole cluster, so Cocoa's one-grapheme-per-Backspace stays correct
+// (EncodingFixesTests.combiningTablesMatchUnicodeOnScreen).
 
 struct UnicodeNFCTable: OutputTable {
     func vowel(base: BaseVowel, mark: VowelMark, tone: Tone, upper: Bool) -> [UInt16] {

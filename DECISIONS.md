@@ -3505,10 +3505,9 @@ code tables and the Converter.
    `Ì ì Ò Þ ò` on macOS (`vieejt` -> `viêòt`). It now maps bytes to their Unicode
    (0xE3 -> ă, 0xF0 -> đ, 0xCC -> U+0300 ...), exactly one scalar per byte and
    never NFC-normalised, because the engine diffs code units 1:1 with the decoded
-   scalars. **Dependency:** a combining tone mark is a separate scalar but joins the
-   previous letter into one grapheme, so how many Backspaces the app must send for
-   it depends on the grapheme-aware diff done in the other branch (session "sửa nhóm
-   lỗi tiếng Anh", item B). Until that merges, `backspaceCount` still counts scalars.
+   scalars. A combining tone mark is a separate scalar but joins the previous letter
+   into one grapheme, so Backspaces are counted by the engine's grapheme-aware diff
+   (merged into main together with this change, 2026-10-17).
    TCVN3 and VNI-Windows keep Latin-1 code points on purpose: the .VnTime / VNI fonts
    read those code points directly.
    *Converter:* Unicode -> cp1258 now yields that real form (precomposed quality
@@ -3524,9 +3523,9 @@ code tables and the Converter.
    *Live-typing impact:* this also changes compound live typing of ậ ặ ệ ộ. Typing the
    dot-below tone after the circumflex/breve now needs a mark-level Backspace (`vieetj`:
    backspace 2 + [U+0323, U+0302, t], was backspace 1 + [U+0323, t]). Where an app deletes
-   a whole grapheme per Backspace this would erase `ê`; it depends on the grapheme-aware
-   diff (session "sửa nhóm lỗi tiếng Anh", item B). Do not merge before item B lands, or
-   verify that macOS apps delete one combining mark per Backspace.
+   a whole grapheme per Backspace, the grapheme-aware diff retypes the cluster instead.
+   Pinned by `combiningTablesMatchUnicodeOnScreen`: compound and cp1258 live typing,
+   replayed with per-grapheme deletion, leave the same text as the Unicode table.
 3. **Case transforms.** "Hoa đầu câu" uppercases the first letter of the text and of
    each sentence (after `. ! ? …` or a line break, skipping spaces, quotes and
    opening brackets) and leaves every other letter alone. "Hoa Sau Mỗi Từ" uppercases

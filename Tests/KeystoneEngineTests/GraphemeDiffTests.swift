@@ -32,7 +32,7 @@ import Testing
     }
 
     @Test func qualityAndToneMarksStackOnOneBase() {
-        #expect(scalars(compound("vieejt")) == scalars("vie\u{0302}\u{0323}t"))
+        #expect(scalars(compound("vieejt")) == scalars("vie\u{0323}\u{0302}t"))
     }
 
     @Test func restoreDeletesExactlyTheComposedGraphemes() {
@@ -53,7 +53,7 @@ import Testing
     }
 
     @Test func severalWordsInARow() {
-        #expect(scalars(compound("tieengs vieejt ")) == scalars("tie\u{0302}\u{0301}ng vie\u{0302}\u{0323}t "))
+        #expect(scalars(compound("tieengs vieejt ")) == scalars("tie\u{0302}\u{0301}ng vie\u{0323}\u{0302}t "))
     }
 
     @Test func toneReRenderIsOneBackspaceAndTheWholeCluster() {

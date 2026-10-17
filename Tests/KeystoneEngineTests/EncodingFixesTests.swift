@@ -8,9 +8,14 @@ import Testing
 
     // MARK: helpers
 
+    // Deletes per grapheme, like a Cocoa text view: cp1258 now emits combining
+    // tone marks, and the engine's grapheme-aware diff counts Backspaces in
+    // clusters, so a scalar-deleting replay would over-delete. The Latin-1
+    // carriers of TCVN3 / VNI-Windows are one grapheme per scalar either way.
     static func run(_ keys: String, table: String) -> [UInt32] {
         let cc = CorpusCase(name: "\(table)-\(keys)", keys: keys, codeTable: table, expected: "")
-        return Replayer.run(cc).unicodeScalars.map { $0.value }
+        return Replayer.runDeletingGraphemes(keys: keys, config: cc.engineConfig)
+            .unicodeScalars.map { $0.value }
     }
 
     // MARK: - 1. CP1258 decode is a real cp1258 decode
@@ -204,5 +209,32 @@ import Testing
     @Test(arguments: EncodingFixesTests.editCases)
     func editSequences(_ c: (table: String, keys: String, want: [UInt32])) {
         #expect(Self.run(c.keys, table: c.table) == c.want, "\(c.table) \(c.keys.debugDescription)")
+    }
+
+    // MARK: - Combining-mark tables vs the grapheme-aware diff
+
+    // The two tables whose live output carries combining marks must leave the
+    // same TEXT on a Cocoa screen as the default Unicode table, through tone
+    // changes, cancels, restores and Backspace. Joins the canonical-order and
+    // real-cp1258 changes with the grapheme-aware diff from another branch.
+    static let combiningTyping: [String] = [
+        "vieejt nam ", "tosf ", "tosf\u{8} ", "tieengs\u{8}\u{8} ", "dduwowcj ",
+        "nguwowif ", "hoaf ", "quaanf ", "tasks ", "docker ", "vieetj\u{8}s ",
+        "VIEEJT ", "mootj ", "ddaauj ", "chuyeenj ", "giuwx ",
+    ]
+
+    @Test(arguments: EncodingFixesTests.combiningTyping)
+    func combiningTablesMatchUnicodeOnScreen(_ keys: String) {
+        func screen(_ table: CodeTable) -> String {
+            var config = EngineConfig()
+            config.codeTable = table
+            return Replayer.runDeletingGraphemes(keys: keys, config: config)
+        }
+        let unicode = screen(.unicode)
+        let compoundAsNFC = screen(.unicodeCompound).precomposedStringWithCanonicalMapping
+        let cp1258AsNFC = screen(.cp1258).precomposedStringWithCanonicalMapping
+        // Compare scalars: String == treats canonically equivalent text as equal.
+        #expect(Array(compoundAsNFC.unicodeScalars) == Array(unicode.unicodeScalars), "compound \(keys.debugDescription)")
+        #expect(Array(cp1258AsNFC.unicodeScalars) == Array(unicode.unicodeScalars), "cp1258 \(keys.debugDescription)")
     }
 }
