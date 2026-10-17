@@ -154,13 +154,13 @@ public final class Engine {
     /// Drops the composing word WITHOUT finalizing it: whatever the last render
     /// showed stays on screen as-is. Used for an app switch / keyboard-focus
     /// change and Secure Input (the text is no longer ours to rewrite), a click
-    /// while Vietnamese is off, and deactivation. Deactivation through the
-    /// modifier-only switch key arrives as flagsChanged, outside any keyDown,
-    /// so there is no edit to post there: a word composing at that moment keeps
-    /// its last render (a known gap, see DECISIONS.md "Commit the word at click
-    /// / chord / function-key boundaries"). A click or a
-    /// Cmd/Ctrl/Option chord while active uses `flushCaretMove()` instead, so
-    /// the word is committed properly (see `EngineController.handle`).
+    /// while Vietnamese is off, and deactivation other than by the switch key
+    /// (menu toggle, per-app state, the switch-key recorder), where a click or
+    /// an app switch has already settled the word. A click, a Cmd/Ctrl/Option
+    /// chord or a function key while active, and the switch key turning
+    /// Vietnamese off, use `flushCaretMove()` instead, so the word is committed
+    /// properly (see `EngineController.handle`, `handleMouseDown` and
+    /// `commitForDeactivation`).
     public func reset() {
         rawKeys = []; prevUnits = []
         // `.afterReset`, NOT `.sentenceStart`: a reset fires on

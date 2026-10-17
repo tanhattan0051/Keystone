@@ -1,6 +1,7 @@
-// BoundaryCommitTests.swift — a click, a Cmd/Ctrl/Option chord or a function
-// key must finalize the word being composed (like a caret move), not drop it
-// with whatever the last mid-word render happened to show.
+// BoundaryCommitTests.swift — a click, a Cmd/Ctrl/Option chord, a function
+// key or the switch key turning Vietnamese off must finalize the word being
+// composed (like a caret move), not drop it with whatever the last mid-word
+// render happened to show.
 
 import Testing
 @testable import KeystoneInput
@@ -19,7 +20,7 @@ private func screen(_ acc: [Unicode.Scalar]) -> String {
     String(String.UnicodeScalarView(acc))
 }
 
-@Suite("Boundary commit: click / chord / function key",
+@Suite("Boundary commit: click / chord / function key / deactivation",
        .enabled(if: systemDictExists, "requires /usr/share/dict/words"))
 struct BoundaryCommitTests {
     // MARK: chords
@@ -116,6 +117,58 @@ struct BoundaryCommitTests {
         c.setActive(false)
         _ = c.handle(letter("k"))
         #expect(c.handle(F1).edit == nil)
+        _ = c.handle(letter("o"))
+        #expect(c.handle(SPACE).edit == nil)
+    }
+
+    // MARK: deactivation (modifier-only switch key)
+
+    // ⌃⇧ arrives as flagsChanged, so there is no keystroke to commit on: the
+    // switch-key path asks the controller to commit and deactivate in one step.
+
+    private func screenAfterDeactivating(_ keys: String) -> (screen: String, active: EngineController) {
+        let c = shippedController()
+        var acc: [Unicode.Scalar] = []
+        for ch in keys { applyRealistically(c.handle(letter(ch)), to: &acc) }
+        apply(c.commitForDeactivation(), to: &acc)
+        return (screen(acc), c)
+    }
+
+    @Test func deactivationCommitsEnglishWordAsTyped() {
+        #expect(screenAfterDeactivating("test").screen == "test")
+        #expect(screenAfterDeactivating("users").screen == "users")
+    }
+
+    @Test func deactivationLeavesVietnameseAlone() {
+        #expect(screenAfterDeactivating("tieengs").screen == "tiếng")
+    }
+
+    @Test func deactivationWithNothingComposingReturnsNil() {
+        #expect(shippedController().commitForDeactivation() == nil)
+    }
+
+    @Test func deactivationLeavesTheControllerInactive() {
+        // The commit and the switch happen under one lock: the next letter is
+        // already English, passed through untouched.
+        let c = screenAfterDeactivating("vie").active
+        let r = c.handle(letter("e"))
+        #expect(r.suppress == false)
+        #expect(r.edit == nil)
+        #expect(r.decision == .passthrough)
+    }
+
+    @Test func deactivationWhileAlreadyInactiveDropsTheMacroBuffer() {
+        // Already English: nothing to commit, but the English-mode macro buffer
+        // is cleared as `setActive(false)` would, so "k" + switch + "o" + Space
+        // does not expand "ko".
+        var cfg = shippedConfig
+        cfg.macrosEnabled = true
+        cfg.macrosExpandWhenVietnameseOff = true
+        cfg.macros = [MacroRule(trigger: "ko", replacement: "không", expandInEnglishMode: true)]
+        let c = shippedController(config: cfg)
+        c.setActive(false)
+        _ = c.handle(letter("k"))
+        #expect(c.commitForDeactivation() == nil)
         _ = c.handle(letter("o"))
         #expect(c.handle(SPACE).edit == nil)
     }

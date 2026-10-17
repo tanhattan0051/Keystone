@@ -29,6 +29,29 @@ public final class EngineController: @unchecked Sendable {
         }
     }
 
+    /// Deactivating on the modifier-only switch key: it arrives as a
+    /// flagsChanged, so there is no keystroke to commit the word on, and a bare
+    /// `setActive(false)` reset would leave whatever the last mid-word render
+    /// showed as final text ("test" -> "tét"). Commits the word and deactivates
+    /// under ONE lock, so no keystroke can slip between the two. Returns the
+    /// edit the caller must post (the caret has not moved, so the word is still
+    /// there), or nil when there is nothing to rewrite; afterwards
+    /// `setActive(false)` is a harmless no-op on the empty buffer. While already
+    /// inactive it just resets, as `setActive(false)` would (English-mode macro
+    /// buffer and sentence position).
+    public func commitForDeactivation() -> EngineResult? {
+        lock.withLock {
+            guard active else {
+                engine.reset()
+                return nil
+            }
+            let r = engine.flushCaretMove()
+            active = false
+            let noop = r.backspaceCount == 0 && r.text.isEmpty
+            return noop ? nil : r
+        }
+    }
+
     /// Drops the composing word without committing it. For app switches and
     /// similar, where the text on screen is no longer ours to rewrite; a click
     /// or chord inside the same app uses `handleMouseDown()` / `handle(_:)`,
