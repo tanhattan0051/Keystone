@@ -149,10 +149,23 @@ public final class EventTapController: @unchecked Sendable {
         w.schedule(deadline: .now() + 1.5, repeating: 1.5, leeway: .milliseconds(500))
         w.setEventHandler { [weak self] in
             guard let self, let p = self.tapPort else { return }
-            if !CGEvent.tapIsEnabled(tap: p) { CGEvent.tapEnable(tap: p, enable: true) }
+            if !CGEvent.tapIsEnabled(tap: p) {
+                CGEvent.tapEnable(tap: p, enable: true)
+                self.tapWasInterrupted()
+            }
         }
         w.resume()
         watchdog = w
+    }
+
+    /// Call whenever the tap was found disabled and re-enabled. Keystrokes typed
+    /// during the gap reached the app untransformed, so the engine's composing
+    /// word no longer matches the screen; the next edit would backspace over
+    /// text it never rendered. Dropping the buffer (no commit: the screen is
+    /// not ours to rewrite) resyncs. Safe from the watchdog queue too:
+    /// `resetBuffer` takes the controller's lock.
+    func tapWasInterrupted() {
+        engine.resetBuffer()
     }
 
     fileprivate func handle(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
@@ -164,6 +177,7 @@ public final class EventTapController: @unchecked Sendable {
             NSLog("Keystone: tap disabled (%@) #%d — re-enabling",
                   type == .tapDisabledByTimeout ? "timeout" : "user input", tapDisableCount)
             if let p = tapPort { CGEvent.tapEnable(tap: p, enable: true) }
+            tapWasInterrupted()
             return nil
         }
         if event.getIntegerValueField(.eventSourceUserData) == Self.selfTag {
@@ -198,6 +212,18 @@ public final class EventTapController: @unchecked Sendable {
         // recoverable by the user; a silently eaten keystroke is not.
         let raw = makeRawKey(event)
         let (suppress, edit, decision) = engine.handle(raw)
+        if let edit, RepostPolicy.canRepostOriginal(decision: decision, edit: edit) {
+            // The edit is just the typed character: re-emit the user's own
+            // event (keeps keycode, flags, autorepeat) tagged as ours, and
+            // swallow the original. No synthetic keyUp: the physical keyUp
+            // is outside the tap's mask and passes with the real keycode.
+            if let copy = event.copy() {
+                copy.setIntegerValueField(.eventSourceUserData, value: Self.selfTag)
+                copy.tapPostEvent(proxy)
+                return nil
+            }
+            // Copy failed (resource pressure): fall back to the synthetic path.
+        }
         if let edit { post(edit, decision: decision, proxy: proxy) }
         return suppress ? nil : Unmanaged.passUnretained(event)
     }

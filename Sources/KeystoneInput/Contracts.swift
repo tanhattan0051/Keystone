@@ -1,12 +1,5 @@
-// Contracts.swift — public value types and small thread-safe caches shared
-// across the input layer (design spec Part B).
-//
-// Everything here is either a plain value type or a tiny lock-protected cache
-// meant to be read on the CGEventTap hot path. See §3 of the design spec:
-// the tap callback may only touch the engine and a small in-memory cache —
-// no system calls, no allocation-heavy work per keystroke.
-
-import os
+// Contracts.swift — public value types shared across the input layer
+// (design spec Part B).
 
 /// One physical keystroke as observed by the event tap, translated into a
 /// platform-neutral shape that `KeyTranslator` and `EngineController` can
@@ -70,38 +63,6 @@ public enum KeyDecision: Equatable, Sendable {
 public protocol EventSink {
     func postBackspace(count: Int)
     func postText(_ text: String)
-}
-
-/// Small snapshot of system state the tap callback is allowed to read.
-/// Populated off the hot path (NSWorkspace notifications, low-frequency
-/// timers) and read under a tiny lock — see design spec Part B §3.
-public struct SystemState: Sendable, Equatable {
-    public var frontAppBundleID: String?
-    public var secureInputActive: Bool
-
-    public init(frontAppBundleID: String? = nil, secureInputActive: Bool = false) {
-        self.frontAppBundleID = frontAppBundleID
-        self.secureInputActive = secureInputActive
-    }
-}
-
-/// Thread-safe cache for `SystemState`. Reads/writes are guarded by an
-/// `OSAllocatedUnfairLock`, cheap enough to call from the tap callback.
-public final class SystemStateCache: @unchecked Sendable {
-    private var state = SystemState()
-    private let lock = OSAllocatedUnfairLock()
-
-    public init() {}
-
-    public func snapshot() -> SystemState {
-        lock.withLock { state }
-    }
-
-    public func mutate(_ f: (inout SystemState) -> Void) {
-        // withLockUnchecked: the caller's closure isn't Sendable, but mutation is
-        // fully serialized by the lock (the class is @unchecked Sendable).
-        lock.withLockUnchecked { f(&state) }
-    }
 }
 
 /// App-compatibility knobs for how the tap posts synthesized keystrokes
