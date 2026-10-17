@@ -19,7 +19,11 @@
 // observationally a no-op for the default table (pinned by the full corpus
 // suite) while making the legacy tables correct.
 //
-// Phase 1 supports Telex only; `config.inputMethod` is not yet consulted.
+// The one exception is output whose DECODED text contains combining marks
+// (.unicodeCompound): a Cocoa text view deletes a whole base+marks grapheme per
+// Backspace, so there `edit(from:to:table:)` diffs and counts in Characters
+// (see its doc comment). The input method (Telex or VNI) is chosen per
+// keystroke from `config.inputMethod` inside `interpret`.
 
 public final class Engine {
     public var config: EngineConfig {
@@ -298,6 +302,17 @@ public final class Engine {
         }
     }
 
+    /// Whether the mid-word display may switch to the raw keys before the word
+    /// ends. Eager restore is only a preview of `finalize`'s restore branch, which
+    /// runs only with `restoreIfInvalid`; showing raw "docker" mid-word and then
+    /// committing "dỏcke" because restore is off would make the screen jump at
+    /// Space. Every place that decides the eager DISPLAY goes through this one
+    /// property so display and commit agree. (The force-English whitelist in
+    /// `finalize` keeps its own `spellCheck`-only gate: it does not need restore.)
+    private var eagerRestoreEnabled: Bool {
+        config.spellCheck && config.restoreIfInvalid
+    }
+
     // append a word char or handle backspace: re-fold whole word, diff against on-screen
     private func rerender() -> EngineResult {
         let comp = interpret(rawKeys)
@@ -307,7 +322,7 @@ public final class Engine {
             // Eager restore would render the raw keys here, but the cancel rule
             // keeps the composed spelling on screen — see `showsComposedAfterCancel`.
             newUnits = encode(comp, table: table)
-        } else if config.spellCheck && isUnrecoverable(comp) {
+        } else if eagerRestoreEnabled && isUnrecoverable(comp) {
             // Eager restore (Phase 7): the composing word can never become a
             // legal Vietnamese syllable, so render the raw keystrokes
             // literally NOW instead of waiting for the word boundary — same
@@ -319,7 +334,7 @@ public final class Engine {
         } else {
             newUnits = encode(comp, table: table)
         }
-        let r = diff(prevUnits, newUnits, table: table)
+        let r = edit(from: prevUnits, to: newUnits, table: table)
         prevUnits = newUnits
         return r
     }
@@ -356,7 +371,7 @@ public final class Engine {
                 for: rule, atSentenceStart: atSentenceStart, globalAutoCapitalize: config.macroAutoCapitalize)
             var text = Converter.convert(expanded, from: .unicode, to: config.codeTable)
             if let b = boundary { text.append(b) }
-            let bs = prevUnits.count
+            let bs = deletionCount(forWholeWord: prevUnits, table: outputTable(for: config.codeTable))
             rawKeys = []; prevUnits = []
             updateSentenceStart(boundary: boundary, hadWord: hadWord)
             return EngineResult(backspaceCount: bs, text: text)
@@ -397,11 +412,13 @@ public final class Engine {
         // Reverts to the (w-collapsed) raw keystrokes, capitalizing the first
         // one if the word starts a sentence — shared by both branches below.
         func revertToRawUnits() -> [UInt16] {
-            var keys = collapsedRawKeys
-            if shouldCapitalize, let first = keys.first {
-                keys[0] = Character(first.uppercased())
+            guard shouldCapitalize, let first = collapsedRawKeys.first else {
+                return collapsedRawKeys.flatMap { table.plain($0) }
             }
-            return keys.flatMap { table.plain($0) }
+            // The uppercase of one letter can be several characters (ß -> "SS"),
+            // so it stays a String; `Character(...)` of it would trap.
+            return Engine.uppercasedUnits(first, table: table)
+                + collapsedRawKeys.dropFirst().flatMap { table.plain($0) }
         }
         let finalUnits: [UInt16]
         if config.spellCheck, !rawKeys.isEmpty, let fe = forceEnglish,
@@ -446,13 +463,11 @@ public final class Engine {
         } else {
             finalUnits = encode(capitalized(comp, if: shouldCapitalize), table: table)
         }
-        let common = commonPrefixCount(prevUnits, finalUnits)
-        let bs = prevUnits.count - common
-        var text = table.decode(Array(finalUnits[common...]))
-        if let b = boundary { text.append(b) }
+        var result = edit(from: prevUnits, to: finalUnits, table: table)
+        if let b = boundary { result.text.append(b) }
         rawKeys = []; prevUnits = []
         updateSentenceStart(boundary: boundary, hadWord: hadWord)
-        return EngineResult(backspaceCount: bs, text: text)
+        return result
     }
 
     // A word/transform character for the active method. Everything else is a
@@ -534,11 +549,58 @@ public final class Engine {
         return i
     }
 
-    private func diff(_ prev: [UInt16], _ new: [UInt16], table: OutputTable) -> EngineResult {
-        let i = commonPrefixCount(prev, new)
-        let bs = prev.count - i
-        let text = table.decode(Array(new[i...]))
-        return EngineResult(backspaceCount: bs, text: text)
+    /// The edit that turns the on-screen `prev` into `new`.
+    ///
+    /// Normally a CODE-UNIT diff (common prefix, then delete the rest and type
+    /// the new tail), which is what the legacy and NFC tables need. But when the
+    /// decoded text has combining marks, a Cocoa text view deletes a whole
+    /// grapheme (base letter + its marks) per Backspace, so a unit count would
+    /// delete only the U+0301 of "ó" and leave a bare "o" + stray mark. In that
+    /// case we diff in Characters: keep the common leading graphemes, delete the
+    /// previous text's remaining graphemes, and retype the new text from the
+    /// first differing grapheme (delete-and-retype, never edit inside a cluster).
+    /// [VERIFY on device] an app that deletes per scalar would now under-delete.
+    ///
+    /// The decision is made from the decoded strings, not from a table name, so
+    /// any table that decodes to combining marks gets the grapheme rule.
+    private func edit(from prev: [UInt16], to new: [UInt16], table: OutputTable) -> EngineResult {
+        let prevText = table.decode(prev)
+        let newText = table.decode(new)
+        guard Engine.hasCombiningMarks(prevText) || Engine.hasCombiningMarks(newText) else {
+            let i = commonPrefixCount(prev, new)
+            return EngineResult(backspaceCount: prev.count - i,
+                                text: table.decode(Array(new[i...])))
+        }
+        let prevGraphemes = Array(prevText)
+        let newGraphemes = Array(newText)
+        var i = 0
+        let m = min(prevGraphemes.count, newGraphemes.count)
+        // Compare scalars, not Character ==, which treats decomposed and
+        // precomposed spellings as equal and would keep a cluster that is
+        // spelled differently on screen.
+        while i < m && prevGraphemes[i].unicodeScalars.elementsEqual(newGraphemes[i].unicodeScalars) { i += 1 }
+        return EngineResult(backspaceCount: prevGraphemes.count - i,
+                            text: String(newGraphemes[i...]))
+    }
+
+    /// How many Backspaces erase the whole on-screen word `prev` (macro
+    /// expansion replaces it entirely): code units, or graphemes when the
+    /// decoded word has combining marks (see `edit`).
+    private func deletionCount(forWholeWord prev: [UInt16], table: OutputTable) -> Int {
+        let text = table.decode(prev)
+        return Engine.hasCombiningMarks(text) ? text.count : prev.count
+    }
+
+    /// A Character is a grapheme cluster, so text with combining marks has
+    /// fewer Characters than Unicode scalars.
+    static func hasCombiningMarks(_ text: String) -> Bool {
+        text.count != text.unicodeScalars.count
+    }
+
+    /// `ch` uppercased, as table code units. The uppercase may be several
+    /// characters (ß -> "SS", ŉ -> "ʼN"), so each is emitted separately.
+    static func uppercasedUnits(_ ch: Character, table: OutputTable) -> [UInt16] {
+        ch.uppercased().flatMap { table.plain($0) }
     }
 
     // MARK: - Parse / render / validity
@@ -620,8 +682,9 @@ public final class Engine {
             } else if cell.dStroke {
                 out += table.dStroke(upper: cell.isUpper)
             } else {
-                let ch: Character = cell.isUpper ? Character(String(cell.consonant).uppercased()) : cell.consonant
-                out += table.plain(ch)
+                out += cell.isUpper
+                    ? Engine.uppercasedUnits(cell.consonant, table: table)
+                    : table.plain(cell.consonant)
             }
         }
         return out
@@ -708,7 +771,7 @@ public final class Engine {
     /// (what the screen already shows, so Space must not change it), so the two
     /// cannot drift. `comp` is the plain fold of `rawKeys`, as `rerender` sees it.
     private func showsComposedAfterCancel(_ comp: Composition) -> Bool {
-        config.spellCheck && cancelledLiteralApplies(comp) && isUnrecoverable(comp)
+        eagerRestoreEnabled && cancelledLiteralApplies(comp) && isUnrecoverable(comp)
             && midWordChoiceAfterCancel(comp) == .composed
     }
 
