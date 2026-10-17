@@ -2,7 +2,7 @@
 // (design spec Part A §1, §7, §8).
 //
 // The public `Engine` owns the composing word's raw keystrokes and re-derives
-// the whole word on every keystroke via `Telex.fold`, then diffs the newly
+// the whole word on every keystroke via `Telex.fold`/`VNI.fold`, then diffs the newly
 // rendered text against what is currently on screen to produce a minimal
 // (backspaceCount, text) edit. On commit (a non-word boundary character, or
 // an explicit flush), the composition is optionally validated against

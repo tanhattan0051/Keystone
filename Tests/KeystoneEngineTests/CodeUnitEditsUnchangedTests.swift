@@ -1,8 +1,8 @@
 // CodeUnitEditsUnchangedTests.swift — pins that the per-keystroke edits of the
 // tables WITHOUT combining marks (.unicode and the 8-bit legacy tables) are
 // byte-identical to the code-unit diff they had before the grapheme-aware diff
-// was added for combining-mark output (see DECISIONS.md "Grapheme-aware edits
-// for decomposed output").
+// was added for combining-mark output (see DECISIONS.md "Engine edit hardening:
+// multi-character uppercase, grapheme edits, eager restore needs restore").
 //
 // The expected strings were recorded on the base commit d1e96ec: one
 // "backspaceCount:scalars.in.hex" entry per keystroke, then one for the Space
