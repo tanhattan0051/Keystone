@@ -67,9 +67,12 @@ Cùng với **self-tag** chống xử lý lại chính event mình sinh ra, **kh
 
 ### Đặt dấu & xử lý thông minh
 
-- **Đặt dấu kiểu mới / cũ** cho các cặp nguyên âm mở `oa`, `oe`, `uy`:
-  - Kiểu mới *(mặc định):* `hòa` · `khỏe` · `thủy`
-  - Kiểu cũ *(tuỳ chọn):* `hoà` · `khoẻ` · `thuỷ`
+- **Vị trí dấu thanh** cho các cặp nguyên âm mở `oa`, `oe`, `uy`:
+  - Mặc định (kiểu truyền thống): `hòa` · `khỏe` · `thủy`
+  - Tuỳ chọn "Đặt dấu oà, uý" (kiểu mới như UniKey/OpenKey): `hoà` · `khoẻ` · `thuỷ`
+  - *Lưu ý cho người đọc code:* tên enum `Orthography.modern` / `.classic` bị đặt ngược với quy ước
+    thường gặp (`.modern` cho ra `hòa`). Hành vi và nhãn trong app đều đúng; xem DECISIONS.md
+    "Orthography default".
 - **Tự khôi phục phím với từ sai** *(mặc định bật):* âm tiết không hợp lệ theo âm vị học sẽ tự trả về
   đúng chuỗi phím thô — nhờ đó gõ từ tiếng Anh như `coins`, `ruins`, `rains` không bị "Việt hoá" nhầm.
   Khi thói quen gõ đè phím dấu để **huỷ** dấu (`t a s s k` muốn "task") khiến phím thô có ký tự lặp
@@ -129,8 +132,10 @@ Cùng với **self-tag** chống xử lý lại chính event mình sinh ra, **kh
 - **Gõ tắt phụ âm** *(mặc định tắt):* đầu từ `f→ph`, `j→gi`, `w→qu`; sau nguyên âm `g→ng`, `h→nh`,
   `k→ch`.
 - **Macro (gõ tắt cụm từ)** *(mặc định tắt):* khớp chính xác, **phân biệt hoa/thường**, nổ đúng lúc
-  chốt từ — thắng cả xử lý tiếng Việt lẫn cơ chế khôi phục. Có thể **nhập trực tiếp file macro `.txt`
-  của OpenKey** và xuất ra JSON riêng.
+  chốt từ — thắng cả xử lý tiếng Việt lẫn cơ chế khôi phục. Có thể **nhập trực tiếp file macro xuất
+  từ OpenKey/UniKey** (dạng `tên:nội dung`, có hoặc không có dòng tiêu đề `;Compatible OpenKey...`),
+  file `tên<TAB>nội dung`, hoặc JSON của chính Keystone. Khi đã có sẵn gõ tắt, app hỏi **Gộp** (giữ cái
+  đang có, bỏ qua gõ tắt trùng tên, giống OpenKey) hay **Thay thế toàn bộ**. Xuất ra JSON.
 
 ### Chuyển chế độ theo ứng dụng
 
@@ -173,13 +178,13 @@ cập nhật, hiển thị) · **Thông tin**. Kèm cửa sổ **Công cụ chuy
 Tải bản mới nhất ở trang **[Releases](https://github.com/tanhattan0051/Keystone/releases/latest)** rồi
 làm theo 4 bước:
 
-1. Tải file **`Keystone-<phiên bản>.dmg`**.
-2. Mở file DMG vừa tải, **kéo `Keystone.app` vào thư mục `Applications`**.
+1. Tải file **`Keystone.zip`**.
+2. Giải nén (bấm đúp), **kéo `Keystone.app` vào thư mục `Applications`**.
 3. Mở **Keystone** từ Launchpad hoặc thư mục Applications.
 4. Khi được hỏi, **cấp quyền Accessibility** (bắt buộc — xem [Cấp quyền](#cấp-quyền-hệ-thống)), rồi
    bật/tắt tiếng Việt bằng chỉ báo **V/E** trên menu bar hoặc phím **⌃⇧**.
 
-> ⚠️ **Bản hiện tại chưa ký (unsigned).** Lần đầu mở, macOS báo *"không xác minh được nhà phát
+> ⚠️ **Bản hiện tại chỉ ký ad-hoc, chưa notarize** (chưa có tài khoản Apple Developer). Lần đầu mở, macOS báo *"không xác minh được nhà phát
 > triển"* → **chuột phải vào `Keystone.app` → Open** (bấm **Open** lần nữa). Nếu vẫn bị chặn, mở
 > **Terminal** và chạy:
 >
@@ -187,7 +192,9 @@ làm theo 4 bước:
 > xattr -dr com.apple.quarantine /Applications/Keystone.app
 > ```
 >
-> Yêu cầu: **macOS 14 trở lên**. Bản ký + notarize chính thức (mở là chạy luôn) sẽ có ở các release sau.
+> Yêu cầu: **macOS 14 trở lên**. Từ đó về sau app **tự cập nhật** (kiểm chữ ký Ed25519 và phiên bản
+> trước khi thay). Vì chữ ký ad-hoc đổi theo mỗi bản build, sau khi cập nhật macOS có thể đòi **cấp lại
+> quyền Accessibility**.
 
 ---
 
