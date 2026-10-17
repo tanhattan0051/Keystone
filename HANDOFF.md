@@ -10,8 +10,8 @@ App **bộ gõ tiếng Việt mới hoàn toàn cho macOS 26/27**, thay thế Op
 - **Tên:** **Keystone** · bundle id `com.tanta.keystone` (đổi được).
 - **Công nghệ:** **Swift thuần** cho tất cả (engine + tầng nhập + UI) · **SwiftUI** (phong cách macOS 27, Liquid Glass) · app menu-bar (LSUIElement) · sàn triển khai **macOS 14.0+** (`Package.swift` `.macOS(.v14)` + `LSMinimumSystemVersion` 14.0 trong `App/Info.plist`; giao diện nhắm macOS 26/27, dev trên 27).
 - **Cơ chế nhập (v1):** **CGEventTap làm đúng cách** (tương thích mọi app). InputMethodKit để dành v2.
-- **Chính tả mặc định:** kiểu mới (oà, uý); kiểu cũ là tuỳ chọn.
-- **Phân phối:** Developer ID + notarize + DMG (không lên App Store được vì cần quyền Accessibility). Cập nhật: Sparkle (Phase 5).
+- **Chính tả mặc định:** bản đã phát hành mặc định **òa, úy** (`hòa`, `thủy`); **oà, uý** bật bằng tuỳ chọn "Đặt dấu oà, uý". (Spec ban đầu định mặc định oà, uý. Tên enum `.modern`/`.classic` trong code bị đặt ngược quy ước — xem DECISIONS.md "Orthography default".)
+- **Phân phối:** hiện tại **ký ad-hoc**, phát hành `Keystone.zip` + `Keystone.zip.sig` trên GitHub Releases bằng `Scripts/release.sh` (chưa có tài khoản Apple; đường Developer ID + notarize + DMG vẫn để sẵn script). Không lên App Store được vì cần quyền Accessibility. **Cập nhật:** bộ tự cập nhật riêng (không Sparkle), xác thực Ed25519 + kiểm phiên bản, thay bundle nguyên tử — xem `Scripts/README.md` và DECISIONS.md "Auto-update".
 - **Giao diện:** **mirror đúng bố cục OpenKey** (menu + Bảng điều khiển 4 tab: Cơ bản / Gõ tắt / Hệ thống / Thông tin) — xem Phần 2 của spec.
 
 ## ⚠️ Lỗi phải diệt (quan trọng nhất — xem Phần E của spec)

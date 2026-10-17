@@ -3037,3 +3037,99 @@ checkboxes; the recorder only captures the key); anything else → record. Escap
 wins over ⌘ because it is the documented cancel key and never a valid hot key.
 Not verified on a device: the resign-key / resign-active paths.
 
+## AX focus change keeps a word typed in the new target
+
+Fixed 2026-10-17 after the v1.1.8 review.
+
+The AX focus re-check is triggered by the first keystroke the switch-key
+monitors see in the new target (for example right after F1 hides iTerm2's
+floating hotkey panel). By then the tap, on its own thread, has usually fed that
+key to the engine already. The unconditional `resetBuffer()` in
+`keyFocusTracker.onFocus` threw it away: Telex `ddi` ("đi") came out as `d` +
+`di`.
+
+Now `AppModel` keeps a pure `WordStartTracker` (KeystoneInput,
+`FocusResetPolicy.swift`) fed from both monitors with `NSEvent.timestamp`:
+keyDowns go through `FocusResetPolicy.classify` (letters, digits, `[`, `]` are
+word keys; space, punctuation, Return/Tab/Esc/arrows and ⌘/⌃/⌥ chords are
+boundaries; Backspace and function keys are neutral), mouse-downs are
+boundaries. `focusTriggerTime` is the first monitored event since the last
+completed AX refresh (set only when tracking is on, cleared by both tracker
+callbacks). On a focus change the buffer is reset only if
+`FocusResetPolicy.shouldResetOnFocusChange` says the word began before that
+trigger. The activation path (`handleAppActivation`) still resets
+unconditionally.
+
+Why it is safe: what the monitors see is either the real key (engine off) or
+Keystone's synthetic output for it, which always comes right after the real
+key. So the estimated word start is never later than the engine's real one, and
+counting digits/brackets as word keys for every input method only moves it
+earlier. An earlier estimate means more resets, never fewer. The residual risk,
+accepted: a word begun in the old target within one refresh window (0.1 s,
+`RefreshThrottle`) right before focus moved survives into the new target.
+Not verified on a device.
+
+## Vietnamese on/off persists; the launch app joins per-app memory
+
+`enabled` is persisted under `settings.enabled` (default on). It is not part of
+"Mặc định" (`resetToDefaults`), which resets settings, not the V/E state. The
+loaded value reaches the engine through `startTap()`'s `controller.setActive`.
+At bootstrap `currentBundleID` is seeded with the frontmost app (unless it is
+Keystone), and when per-app memory is on and something was remembered for that
+app it is applied through the same `SmartSwitch.resolve` path as an activation
+(`applyRememberedState(for:)`). Otherwise the persisted global state would beat
+the per-app memory for the launch app until the first app switch.
+
+## Switch key right after Cmd-Tab is credited to the right app
+
+`NSWorkspace.didActivateApplicationNotification` can arrive after a quick ⌘Tab
+followed by the switch key, so the toggle was learned for the app just left
+(and the late notification saved it for that app again). 
+`toggleVietnameseFromHotKey` now reads `NSWorkspace.frontmostApplication`; if it
+is a real other app that differs from `currentBundleID`, it runs
+`handleAppActivation` first. The late notification for the same app is then a
+no-op: it saves the current state under the now-correct id and restores the
+same state.
+
+## Relaunch waits for the old instance's lock
+
+`relaunch()` starts the new process and terminates; the child's
+`SingleInstance.acquire()` could run before the parent released its flock, so
+the child said "Keystone đã đang chạy" and quit, leaving no input method at all.
+`relaunch()` now sets `KEYSTONE_RELAUNCHED=1` in the child's environment (an
+environment variable rather than an argument, because AppKit reads `-key value`
+arguments as UserDefaults overrides). With the marker the child retries
+`acquire` every 100 ms for up to 2 s; without it a genuine second copy still
+bows out at once.
+
+## Macro trigger validation and list fixes
+
+The engine matches macros against the raw keys of one word, so a trigger with a
+character the engine never accumulates can never fire, and the editor used to
+accept it silently (`đc`, `k2` in Telex, `a.b`). `MacroTable.triggerProblem`
+(pure) reports: empty, whitespace, a non-ASCII letter (usually not a raw key:
+type `ddc`, not `đc`; on layouts that type the letter directly the warning can
+be ignored), or a boundary character for the current input method (word
+characters mirror `Engine.isWordChar`: letters, plus digits for VNI, plus `[`
+`]` otherwise). Because this duplicates a private engine rule,
+`MacroTriggerValidationTests` drives a real `Engine` for all four input methods
+and asserts a macro fires exactly when `triggerProblem` returns nil. The editor
+shows the problem under the trigger field and the table marks the row; saving is
+never blocked.
+
+List fixes: "−" deletes only rows that are selected and visible under the
+current search; `MacroStore.binding(for:)` re-resolves the row by id on every
+access instead of capturing an index (a stale index crashed or edited the wrong
+row after the list shrank or reordered).
+
+## Simple Telex 1/2 caption, pinned release action
+
+Simple Telex 1 and 2 are offered in the pickers but no engine code branches on
+them; they behave exactly like Telex. The pickers now label them "(đang chạy như
+Telex)" and the Control Panel shows the same caption under the picker
+(`InputMethod.behavesAsTelex` / `displayCaption` in `EngineTypeDisplay.swift`).
+
+`.github/workflows/release.yml` pins `softprops/action-gh-release` to commit
+`3bb12739c298aeb8a4eeaf626c5b8d85266b0e65` (v2.6.2) instead of the mutable `@v2`
+tag, since the action receives the repository token.
+
