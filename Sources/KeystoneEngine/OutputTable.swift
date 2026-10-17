@@ -58,3 +58,12 @@ func decodeLatin1(_ units: [UInt16]) -> String {
     }
     return String(view)
 }
+
+/// Code units for a Character made only of ASCII scalars, one per scalar.
+/// `Character.asciiValue` is NOT enough: "\r\n" is a single Character whose
+/// asciiValue is 0x0A, which silently turned CRLF into LF. nil = not pure ASCII.
+func asciiUnits(_ ch: Character) -> [UInt16]? {
+    let scalars = ch.unicodeScalars
+    guard scalars.allSatisfy({ $0.isASCII }) else { return nil }
+    return scalars.map { UInt16($0.value) }
+}

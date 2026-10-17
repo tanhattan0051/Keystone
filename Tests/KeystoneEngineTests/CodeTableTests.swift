@@ -47,29 +47,32 @@ import Testing
         )
     }
 
-    // MARK: - (b) CP1258 byte assertions
+    // MARK: - (b) CP1258 assertions
     //
-    // Expected bytes computed with Python's built-in `cp1258` codec, then
-    // verified round-trip (decode -> NFC-normalize -> original word); see
-    // CP1258.swift's header. E.g.:
-    //   python3 -c "print([hex(b) for b in ('a'+'́').encode('cp1258')])"
+    // Live CP1258 output is the REAL cp1258 decode of the bytes (one scalar
+    // per byte): quality letters are precomposed Unicode (â ă ê ô ơ ư đ) and
+    // tone bytes are combining marks (0xCC->U+0300, 0xEC->U+0301,
+    // 0xD2->U+0309, 0xDE->U+0303, 0xF2->U+0323). Expected scalars were
+    // computed with Python's `cp1258` codec, e.g.
+    //   python3 -c "print([hex(ord(c)) for c in bytes([0x76,0x69,0xEA,0xF2,0x74]).decode('cp1258')])"
+    // The original bytes are kept in the trailing comments.
 
-    static let cp1258Cases: [(keys: String, bytes: [UInt8])] = [
-        ("vieejt",   [0x76, 0x69, 0xEA, 0xF2, 0x74]),                    // việt
-        ("tieengs",  [0x74, 0x69, 0xEA, 0xEC, 0x6E, 0x67]),              // tiếng
-        ("hoaf",     [0x68, 0x6F, 0xCC, 0x61]),                          // hòa
-        ("muoons",   [0x6D, 0x75, 0xF4, 0xEC, 0x6E]),                    // muốn
-        ("dduwowcj", [0xF0, 0xFD, 0xF5, 0xF2, 0x63]),                    // được
-        ("quoocs",   [0x71, 0x75, 0xF4, 0xEC, 0x63]),                    // quốc
-        ("nguyeexn", [0x6E, 0x67, 0x75, 0x79, 0xEA, 0xDE, 0x6E]),        // nguyễn
+    static let cp1258Cases: [(keys: String, scalars: [UInt32])] = [
+        ("vieejt",   [0x76, 0x69, 0xEA, 0x0323, 0x74]),                  // việt   76 69 EA F2 74
+        ("tieengs",  [0x74, 0x69, 0xEA, 0x0301, 0x6E, 0x67]),            // tiếng  74 69 EA EC 6E 67
+        ("hoaf",     [0x68, 0x6F, 0x0300, 0x61]),                        // hòa    68 6F CC 61
+        ("muoons",   [0x6D, 0x75, 0xF4, 0x0301, 0x6E]),                  // muốn   6D 75 F4 EC 6E
+        ("dduwowcj", [0x0111, 0x01B0, 0x01A1, 0x0323, 0x63]),            // được   F0 FD F5 F2 63
+        ("quoocs",   [0x71, 0x75, 0xF4, 0x0301, 0x63]),                  // quốc   71 75 F4 EC 63
+        ("nguyeexn", [0x6E, 0x67, 0x75, 0x79, 0xEA, 0x0303, 0x6E]),      // nguyễn 6E 67 75 79 EA DE 6E
     ]
 
     @Test(arguments: CodeTableTests.cp1258Cases)
-    func cp1258ByteExact(_ c: (keys: String, bytes: [UInt8])) {
+    func cp1258Exact(_ c: (keys: String, scalars: [UInt32])) {
         let cc = CorpusCase(name: "cp1258-\(c.keys)", keys: c.keys, codeTable: "cp1258", expected: "")
         let out = Replayer.run(cc)
-        let bytes = Array(out.unicodeScalars.map { UInt8($0.value) })
-        #expect(bytes == c.bytes, "keys=\(c.keys) got \(bytes.map { String(format: "0x%02X", $0) })")
+        let scalars = out.unicodeScalars.map { $0.value }
+        #expect(scalars == c.scalars, "keys=\(c.keys) got \(scalars.map { String(format: "0x%04X", $0) })")
     }
 
     // MARK: - (c) TCVN3 / VNI-Windows byte assertions
