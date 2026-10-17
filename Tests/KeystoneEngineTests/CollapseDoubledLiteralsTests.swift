@@ -48,12 +48,13 @@ struct CollapseDoubledLiteralsTests {
         #expect(vni("www") == "www")
     }
     @Test func bareWRunNeedsThreeOrMoreAndATelexMethod() {
-        func run(_ s: String, _ m: InputMethod = .telex) -> Bool {
-            Engine.isBareWRun(Array(s), inputMethod: m)
+        func run(_ s: String, _ m: InputMethod = .telex, lac: Bool = true) -> Bool {
+            Engine.isBareWRun(Array(s), inputMethod: m, literalAfterCancel: lac)
         }
         #expect(run("www") && run("wwww") && run("WwW"))
         #expect(!run("ww") && !run("w") && !run("wwin") && !run("wwwx"))
         #expect(!run("www", .vni))
+        #expect(!run("www", lac: false))
     }
     @Test func simpleTelexBehavesLikeTelex() {
         #expect(String(Engine.collapseDoubledLiterals(Array("swwim"), inputMethod: .simpleTelex1)) == "swim")
@@ -74,6 +75,9 @@ struct ChooseAtCommitAfterCancelTests {
     }
 
     @Test func rawWinningWhileComposedIsOnScreenFlipsToComposed() {
+        // The margin rule only sees depth 5 vs 5 if the prefix index really exists.
+        #expect(lex.isPrefixIndexBuilt)
+        #expect(lex.prefixDepth("songs") == 5)
         // Margin rule picks raw at commit (depth 5 vs 5); the screen shows composed.
         #expect(RestoreDecision.chooseAfterCancel(
             composed: "songs", raws: ["songss"], lexicon: lex, atCommit: true) == .raw)

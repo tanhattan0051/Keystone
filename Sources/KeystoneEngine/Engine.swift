@@ -297,7 +297,8 @@ public final class Engine {
         let comp = interpret(rawKeys)
         let table = outputTable(for: config.codeTable)
         let newUnits: [UInt16]
-        if Engine.isBareWRun(rawKeys, inputMethod: config.inputMethod) {
+        if Engine.isBareWRun(rawKeys, inputMethod: config.inputMethod,
+                             literalAfterCancel: config.literalAfterCancel) {
             // `www`: the fold would eat one w per cancel; see `isBareWRun`.
             newUnits = rawKeys.flatMap { table.plain($0) }
         } else if showsComposedAfterCancel(comp) {
@@ -377,8 +378,8 @@ public final class Engine {
         // Collapse the "doubled-w" habit (ww = one literal w) up front: in
         // Telex `w` is always the ư/horn key, so a run of exactly two w's is
         // an escape to a single `w` (the fold already collapses a bare "ww" →
-        // "w"); a run of three or more is literal and stays. This makes an English word typed with doubled w's revert
-        // cleanly — "wwin" → "win", "swwim" → "swim" — while words without a
+        // "w"); a run of three or more is literal and stays. This makes an English word typed
+        // with doubled w's revert cleanly — "wwin" → "win", "swwim" → "swim" — while words without a
         // "ww" pair (boss, wrong) are untouched. Shared by both the
         // force-English and restore-if-invalid branches below, and by
         // `revertToRawUnits`.
@@ -401,7 +402,8 @@ public final class Engine {
             return keys.flatMap { table.plain($0) }
         }
         let finalUnits: [UInt16]
-        if Engine.isBareWRun(rawKeys, inputMethod: config.inputMethod) {
+        if Engine.isBareWRun(rawKeys, inputMethod: config.inputMethod,
+                             literalAfterCancel: config.literalAfterCancel) {
             // `www`: every w is literal, the fold would eat one per cancel.
             finalUnits = revertToRawUnits()
         } else if config.spellCheck, !rawKeys.isEmpty, let fe = forceEnglish,
@@ -523,8 +525,11 @@ public final class Engine {
     /// -> `ww`); `rerender` and `finalize` render the keys as typed instead.
     /// Mixed words (`wwwin`) are not covered: they have a vowel or other letter
     /// and go through the ordinary restore, whose collapse leaves the run alone.
-    static func isBareWRun(_ keys: [Character], inputMethod: InputMethod) -> Bool {
-        inputMethod != .vni && keys.count >= 3 && keys.allSatisfy { $0 == "w" || $0 == "W" }
+    static func isBareWRun(_ keys: [Character], inputMethod: InputMethod,
+                           literalAfterCancel: Bool) -> Bool {
+        // Only `literalAfterCancel` makes the fold drop the cancelling key; with
+        // it off the fold already shows the run as typed, so leave it alone.
+        literalAfterCancel && inputMethod != .vni && keys.count >= 3 && keys.allSatisfy { $0 == "w" || $0 == "W" }
     }
 
     /// Sentence-start auto-capitalize (Phase 4): uppercases the first cell,
