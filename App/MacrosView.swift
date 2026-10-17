@@ -1,6 +1,7 @@
 // MacrosView.swift — "Gõ tắt" editor window (design spec Part 2 §2.2 "Gõ tắt"
-// tab / Part C §3). UI + storage only: the engine doesn't expand macros yet
-// (see HANDOFF.md Phase 4), so `MacroStore` just owns a persisted list.
+// tab / Part C §3). UI + storage: `MacroStore` owns the persisted list and
+// pushes it into EngineConfig; the engine expands macros (Engine.finalize in
+// Vietnamese mode, processInactive in English mode).
 
 import SwiftUI
 import AppKit
@@ -111,11 +112,19 @@ final class MacroStore {
 
     /// A two-way binding into one macro by id, for the Table + inline editor.
     func binding(for id: Macro.ID) -> Binding<Macro>? {
-        guard let idx = macros.firstIndex(where: { $0.id == id }) else { return nil }
+        guard let initial = macros.first(where: { $0.id == id }) else { return nil }
+        // The index is re-resolved by id on every access: the list can shrink
+        // or reorder (delete, import) while a binding is still alive.
+        var lastKnown = initial
         return Binding(
-            get: { self.macros[idx] },
+            get: {
+                if let current = self.macros.first(where: { $0.id == id }) {
+                    lastKnown = current
+                }
+                return lastKnown
+            },
             set: { newValue in
-                guard idx < self.macros.count else { return }
+                guard let idx = self.macros.firstIndex(where: { $0.id == id }) else { return }
                 self.macros[idx] = newValue
                 self.save()
             }
@@ -242,6 +251,16 @@ struct MacrosView: View {
         }
     }
 
+    /// Validated against the CURRENT input method; a different method can make
+    /// the same trigger valid (e.g. "k2" is fine in VNI).
+    private func triggerProblem(for macro: Macro) -> MacroTriggerProblem? {
+        MacroTable.triggerProblem(
+            macro.trigger,
+            inputMethod: AppModel.shared.inputMethod,
+            expandInEnglishMode: macro.expandInEnglishMode
+        )
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             if let issue = store.loadIssue {
@@ -258,7 +277,18 @@ struct MacrosView: View {
                     }
                 }
                 .width(40)
-                TableColumn("Gõ tắt", value: \.trigger)
+                TableColumn("") { m in
+                    if triggerProblem(for: m) != nil {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .help("Gõ tắt này sẽ không bao giờ khớp")
+                    }
+                }
+                .width(24)
+                TableColumn("Gõ tắt") { m in
+                    Text(m.trigger)
+                        .foregroundStyle(triggerProblem(for: m) == nil ? .primary : .secondary)
+                }
                 TableColumn("Nội dung thay thế", value: \.replacement)
                 TableColumn("EN") { m in
                     Image(systemName: m.expandInEnglishMode ? "checkmark" : "")
@@ -267,11 +297,19 @@ struct MacrosView: View {
                 .width(36)
             }
             .searchable(text: $query, prompt: "Tìm gõ tắt")
+            // Rows hidden by the filter must not stay selected: the editor
+            // would show an invisible row and "−" would delete it.
+            .onChange(of: query) {
+                selection.formIntersection(filtered.map(\.id))
+            }
 
             Divider()
 
             if let id = selection.first, let binding = store.binding(for: id) {
-                MacroEditor(macro: binding)
+                MacroEditor(
+                    macro: binding,
+                    problem: triggerProblem(for: binding.wrappedValue)
+                )
                     .padding()
                     .background(.regularMaterial)
             } else {
@@ -292,8 +330,11 @@ struct MacrosView: View {
                 .help("Thêm gõ tắt")
 
                 Button {
-                    store.delete(selection)
-                    selection.removeAll()
+                    // Belt and braces with the onChange above: only ever
+                    // delete rows the user can currently see.
+                    let visibleSelected = selection.intersection(filtered.map(\.id))
+                    store.delete(visibleSelected)
+                    selection.subtract(visibleSelected)
                 } label: {
                     Image(systemName: "minus")
                 }
@@ -381,6 +422,9 @@ struct MacrosView: View {
 
 private struct MacroEditor: View {
     @Binding var macro: Macro
+    /// Why the trigger can never fire (nil = fine). Informational only: the
+    /// user may be mid-edit, so saving is never blocked.
+    let problem: MacroTriggerProblem?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -391,6 +435,11 @@ private struct MacroEditor: View {
                 Image(systemName: "arrow.right")
                 TextField("Nội dung (vd: Việt Nam)", text: $macro.replacement)
                     .textFieldStyle(.roundedBorder)
+            }
+            if let problem {
+                Text(problem.message)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
             }
             HStack(spacing: 20) {
                 Toggle("Bật", isOn: $macro.enabled)
