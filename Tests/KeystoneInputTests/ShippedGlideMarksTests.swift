@@ -17,6 +17,15 @@ struct ShippedGlideMarksTests {
         #expect(typeShipped(keys) == expected)
     }
 
+    // qu must NOT be folded in the Telex circumflex test: English `queue`
+    // would otherwise become quêu (a valid syllable the lexicon cannot rescue).
+    @Test(arguments: [
+        ("queue", "queue "), ("queues", "queues "), ("queuer", "queuer "),
+    ])
+    func englishQueueStaysEnglish(_ keys: String, _ expected: String) {
+        #expect(typeShipped(keys) == expected)
+    }
+
     @Test(arguments: [
         ("luu7", "lưu "), ("giay61", "giấy "), ("huou7", "hươu "),
         ("giua74", "giữa "), ("quan6", "quân "),

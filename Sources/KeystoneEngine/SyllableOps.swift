@@ -61,12 +61,19 @@ enum SyllableOps {
     /// checks of both interpreters (Telex circumflex/w, VNI 6/7/8) should use:
     /// the unfolded run would include gi's i ("iây" is no nucleus, "ây" is) and
     /// reject giayas/giay61.
-    static func foldedNucleusLetters(_ cells: [Cell]) -> String {
+    ///
+    /// `foldingQu: false` folds only gi's glide. The Telex non-adjacent
+    /// circumflex test needs that: it asks "would this repeated vowel be a new
+    /// nucleus vowel?", and folding qu's u there turns English `queue` ("u" is
+    /// no nucleus vowel, "eu"+"e" is not a prefix) into quêu. No Vietnamese
+    /// syllable is lost by leaving qu unfolded in that one test (quaya and the
+    /// rest of the qu set already worked on the unfolded run).
+    static func foldedNucleusLetters(_ cells: [Cell], foldingQu: Bool = true) -> String {
         let vowelIdx = cells.indices.filter { cells[$0].isVowel }
         guard let first = vowelIdx.first else { return "" }
         let onset = cells[..<first].filter { !$0.isVowel }
         var letters = vowelIdx.map { NFC.qualityLetter(cells[$0].base, cells[$0].mark) }
-        if onset.last?.consonant == "q", vowelIdx.count >= 2,
+        if foldingQu, onset.last?.consonant == "q", vowelIdx.count >= 2,
            cells[vowelIdx[0]].base == .u, cells[vowelIdx[0]].mark == .none {
             letters.removeFirst()
         } else if onset.count == 1, onset[0].consonant == "g", vowelIdx.count >= 2,
