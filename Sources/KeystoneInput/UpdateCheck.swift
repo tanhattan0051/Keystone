@@ -183,6 +183,41 @@ public enum UpdateLimits {
     }
 }
 
+public enum CappedStreamError: Error, Equatable, Sendable {
+    case tooLarge
+}
+
+/// Copies a byte stream to a file handle in buffered chunks and aborts the
+/// moment the running count passes `limit`. This is the real download cap:
+/// `URLSession.download(for:delegate:)` never reports progress to a task
+/// delegate, so the whole body would land on disk before any check ran.
+public enum CappedStreamWriter {
+    /// Returns the number of bytes written. Throws `.tooLarge` on the first
+    /// byte beyond `limit` (so at most `limit` bytes ever reach the handle)
+    /// and stops pulling from `bytes`, letting the caller cancel the request.
+    public static func write<S: AsyncSequence>(
+        _ bytes: S,
+        to handle: FileHandle,
+        limit: Int,
+        chunkSize: Int = 64 * 1024
+    ) async throws -> Int64 where S.Element == UInt8 {
+        var buffer = Data()
+        buffer.reserveCapacity(chunkSize)
+        var total: Int64 = 0
+        for try await byte in bytes {
+            total += 1
+            if total > Int64(limit) { throw CappedStreamError.tooLarge }
+            buffer.append(byte)
+            if buffer.count >= chunkSize {
+                try handle.write(contentsOf: buffer)
+                buffer.removeAll(keepingCapacity: true)
+            }
+        }
+        if !buffer.isEmpty { try handle.write(contentsOf: buffer) }
+        return total
+    }
+}
+
 /// Outcome of inspecting the `Info.plist` of an extracted update bundle.
 public enum StagedBundleCheck: Equatable, Sendable {
     case ok
