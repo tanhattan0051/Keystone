@@ -297,6 +297,31 @@ public enum RestoreDecision {
         return lexicon.prefixDepth(composedLower) >= rawDepth + englishLikenessMargin ? .composed : .raw
     }
 
+    /// The commit-time decision for a cancelled word, given what the screen shows:
+    /// `chooseAfterCancel(atCommit: true)`, except that a `.raw` result becomes
+    /// `.composed` when the screen already shows the composed spelling
+    /// (`displayedComposed`) and none of `raws` is itself a dictionary word.
+    ///
+    /// WHY. The display rule is prefix-based (`chooseMidWordAfterCancel` accepts a
+    /// composed PREFIX such as "songs"), the commit rule needs a WORD, and the
+    /// 1934 list lacks "songs": the user saw "songs" and Space replaced it with
+    /// "songss". Showing one thing and committing another is worse than either
+    /// choice, and with no raw spelling vouched for by the dictionary the screen
+    /// is the better evidence. A raw that IS a word still wins (`chooseAfterCancel`
+    /// rule 1), and a screen showing raw is left alone.
+    public static func chooseAtCommitAfterCancel(
+        composed: String, raws: [String], lexicon: Lexicon, displayedComposed: Bool
+    ) -> RestoreChoice {
+        let choice = chooseAfterCancel(composed: composed, raws: raws, lexicon: lexicon, atCommit: true)
+        guard choice == .raw, displayedComposed else { return choice }
+        // `chooseAfterCancel` also returns `.raw` when the composed spelling is not a
+        // deletion of any raw (a quick-consonant expansion): never override that.
+        let composedLower = composed.lowercased()
+        let rawsLower = distinctLowercased(raws)
+        guard rawsLower.contains(where: { isSubsequence(composedLower, of: $0) }) else { return .raw }
+        return rawsLower.contains(where: { lexicon.contains($0) }) ? .raw : .composed
+    }
+
     /// The mid-word (display) decision for a word the cancel rule accepted: the
     /// ordinary mid-word `chooseAfterCancel`, with the "composed is a prefix"
     /// rule (rule 2) switched off while the raw spelling is still alive past the

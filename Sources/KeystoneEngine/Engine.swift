@@ -297,23 +297,22 @@ public final class Engine {
         let comp = interpret(rawKeys)
         let table = outputTable(for: config.codeTable)
         let newUnits: [UInt16]
-        if config.spellCheck && isUnrecoverable(comp) {
+        if Engine.isBareWRun(rawKeys, inputMethod: config.inputMethod) {
+            // `www`: the fold would eat one w per cancel; see `isBareWRun`.
+            newUnits = rawKeys.flatMap { table.plain($0) }
+        } else if showsComposedAfterCancel(comp) {
+            // Eager restore would render the raw keys here, but the cancel rule
+            // keeps the composed spelling on screen — see `showsComposedAfterCancel`.
+            newUnits = encode(comp, table: table)
+        } else if config.spellCheck && isUnrecoverable(comp) {
             // Eager restore (Phase 7): the composing word can never become a
             // legal Vietnamese syllable, so render the raw keystrokes
             // literally NOW instead of waiting for the word boundary — same
             // raw-rendering `finalize`'s revert-to-raw branch uses, so there
             // is no visual jump when the word boundary is eventually reached
             // (see DECISIONS.md "Eager restore (spellCheck / Phase 7)").
-            //
-            // Except after a Telex cancel, when the composed spelling is
-            // clearly the more English-like one: the raw keys would bring back
-            // the cancel key the user just removed on purpose (`suss`, then
-            // `unssuspend`) — see `cancelledLiteralApplies`.
-            if cancelledLiteralApplies(comp), midWordChoiceAfterCancel(comp) == .composed {
-                newUnits = encode(comp, table: table)
-            } else {
-                newUnits = Engine.collapseDoubledLiterals(rawKeys).flatMap { table.plain($0) }
-            }
+            newUnits = Engine.collapseDoubledLiterals(rawKeys, inputMethod: config.inputMethod)
+                .flatMap { table.plain($0) }
         } else {
             newUnits = encode(comp, table: table)
         }
@@ -376,14 +375,14 @@ public final class Engine {
         // two layers".
         let compHasVowel = comp.cells.contains { $0.isVowel }
         // Collapse the "doubled-w" habit (ww = one literal w) up front: in
-        // Telex `w` is always the ư/horn key, so a "ww" pair is always an
-        // escape to a single `w` (the fold already collapses a bare "ww" →
-        // "w"). This makes an English word typed with doubled w's revert
+        // Telex `w` is always the ư/horn key, so a run of exactly two w's is
+        // an escape to a single `w` (the fold already collapses a bare "ww" →
+        // "w"); a run of three or more is literal and stays. This makes an English word typed with doubled w's revert
         // cleanly — "wwin" → "win", "swwim" → "swim" — while words without a
         // "ww" pair (boss, wrong) are untouched. Shared by both the
         // force-English and restore-if-invalid branches below, and by
         // `revertToRawUnits`.
-        let collapsedRawKeys = Engine.collapseDoubledLiterals(rawKeys)
+        let collapsedRawKeys = Engine.collapseDoubledLiterals(rawKeys, inputMethod: config.inputMethod)
         let rawWord = String(collapsedRawKeys)
         // The composed word is rendered through the UNICODE table regardless
         // of the active code table (a legacy table's ASCII bytes are
@@ -402,7 +401,10 @@ public final class Engine {
             return keys.flatMap { table.plain($0) }
         }
         let finalUnits: [UInt16]
-        if config.spellCheck, !rawKeys.isEmpty, let fe = forceEnglish,
+        if Engine.isBareWRun(rawKeys, inputMethod: config.inputMethod) {
+            // `www`: every w is literal, the fold would eat one per cancel.
+            finalUnits = revertToRawUnits()
+        } else if config.spellCheck, !rawKeys.isEmpty, let fe = forceEnglish,
            rawWord.lowercased() != composedWordU.lowercased(),
            fe.contains(rawWord) {
             // Force-English whitelist (Lớp B): the just-typed word composes a
@@ -428,9 +430,11 @@ public final class Engine {
             // (`unssuspend` -> `unsuspend`), not only when it is itself listed.
             let choice: RestoreChoice
             if cancelledLiteralApplies(comp), let lexicon {
-                choice = RestoreDecision.chooseAfterCancel(
+                // The commit must not undo what the cancel rule left on screen
+                // (`songss` shows "songs"): see `chooseAtCommitAfterCancel`.
+                choice = RestoreDecision.chooseAtCommitAfterCancel(
                     composed: composedWordU, raws: [rawWord, String(rawKeys)],
-                    lexicon: lexicon, atCommit: true)
+                    lexicon: lexicon, displayedComposed: showsComposedAfterCancel(interpret(rawKeys)))
             } else {
                 choice = RestoreDecision.choose(composed: composedWordU, raw: rawWord, lexicon: lexicon)
             }
@@ -469,6 +473,8 @@ public final class Engine {
     ///
     ///   - `ww` → `w`: `w` is always the ư/horn transform, so a doubled `w` is
     ///     the escape for one literal `w` — "wwin"/"swwim" revert to "win"/"swim".
+    ///     Only a run of EXACTLY two: a third `w` already undid the escape, so
+    ///     "www" (the web prefix) is three literal `w`s and stays "www".
     ///   - `ddd` → `dd`: `dd` is the đ transform, so a THIRD `d` undoes the đ and
     ///     leaves two literal `d`s. An English/tech word whose literal starts
     ///     "dd" is therefore typed with a leading "ddd" (its only route, since
@@ -477,8 +483,12 @@ public final class Engine {
     ///     "dd" pair (English "add", "buddy") is NOT touched — only a run of
     ///     three. See DECISIONS.md "The ddd→dd escape in raw-restore".
     ///
+    /// VNI is the identity: its escapes are digits, and `w`/`d` are ordinary
+    /// letters there ("dddos", "swwim" are what the user typed).
+    ///
     /// Case of the kept character(s) is preserved.
-    private static func collapseDoubledLiterals(_ keys: [Character]) -> [Character] {
+    static func collapseDoubledLiterals(_ keys: [Character], inputMethod: InputMethod) -> [Character] {
+        if inputMethod == .vni { return keys }
         func isD(_ c: Character) -> Bool { c == "d" || c == "D" }
         func isW(_ c: Character) -> Bool { c == "w" || c == "W" }
         var out: [Character] = []
@@ -491,15 +501,30 @@ public final class Engine {
                 i += 3
                 continue
             }
-            out.append(ch)
-            // "ww" → keep one w, drop the paired second (the horn escape).
-            if isW(ch), i + 1 < keys.count, isW(keys[i + 1]) {
-                i += 2
+            if isW(ch) {
+                var runEnd = i + 1
+                while runEnd < keys.count, isW(keys[runEnd]) { runEnd += 1 }
+                // Exactly two → one (the horn escape); any other run is literal.
+                let keep = (runEnd - i == 2) ? 1 : runEnd - i
+                out.append(contentsOf: keys[i..<(i + keep)])
+                i = runEnd
                 continue
             }
+            out.append(ch)
             i += 1
         }
         return out
+    }
+
+    /// Is the word nothing but a run of three or more w/W in a Telex-family
+    /// method (`www`)? The `ww` escape is a run of exactly two, so these w's are
+    /// all literal. The fold, however, treats the second w as a cancel and then
+    /// drops that key from the display, so it would show one w too few (`www`
+    /// -> `ww`); `rerender` and `finalize` render the keys as typed instead.
+    /// Mixed words (`wwwin`) are not covered: they have a vowel or other letter
+    /// and go through the ordinary restore, whose collapse leaves the run alone.
+    static func isBareWRun(_ keys: [Character], inputMethod: InputMethod) -> Bool {
+        inputMethod != .vni && keys.count >= 3 && keys.allSatisfy { $0 == "w" || $0 == "W" }
     }
 
     /// Sentence-start auto-capitalize (Phase 4): uppercases the first cell,
@@ -661,7 +686,7 @@ public final class Engine {
         guard !RestoreDecision.mixesLetterCase(rawKeys) else { return false }
         return RestoreDecision.cancelDeletedExactlyOneKey(
             typedCount: rawKeys.count,
-            collapsedTypedCount: Engine.collapseDoubledLiterals(rawKeys).count,
+            collapsedTypedCount: Engine.collapseDoubledLiterals(rawKeys, inputMethod: config.inputMethod).count,
             composedCount: comp.cells.count)
     }
 
@@ -677,7 +702,17 @@ public final class Engine {
     /// may be the real spelling. Equal strings (no `ww`/`ddd`) are evaluated once
     /// by `RestoreDecision.chooseAfterCancel`.
     private func rawSpellings(of keys: [Character]) -> [String] {
-        [String(Engine.collapseDoubledLiterals(keys)), String(keys)]
+        [String(Engine.collapseDoubledLiterals(keys, inputMethod: config.inputMethod)), String(keys)]
+    }
+
+    /// Does the screen show the COMPOSED spelling of a cancelled word because of
+    /// the cancel display rule, where eager restore would otherwise have shown
+    /// the raw keys? One definition for `rerender` (what to draw) and `finalize`
+    /// (what the screen already shows, so Space must not change it), so the two
+    /// cannot drift. `comp` is the plain fold of `rawKeys`, as `rerender` sees it.
+    private func showsComposedAfterCancel(_ comp: Composition) -> Bool {
+        config.spellCheck && cancelledLiteralApplies(comp) && isUnrecoverable(comp)
+            && midWordChoiceAfterCancel(comp) == .composed
     }
 
     /// What the screen should show WHILE the word is still being typed, for a
