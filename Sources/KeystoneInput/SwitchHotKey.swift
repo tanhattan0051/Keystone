@@ -151,6 +151,36 @@ extension SwitchHotKey {
     }
 }
 
+/// What the "Phím kèm:" recorder does with a keyDown while it is armed.
+public enum SwitchKeyRecorderAction: Equatable, Sendable {
+    /// Store the key as the combo's key and swallow the event.
+    case record
+    /// Stop recording without storing anything and swallow the event (Escape).
+    case cancelConsume
+    /// Stop recording without storing anything and let the event through, so
+    /// an app shortcut such as ⌘W / ⌘Q / ⌘, still does its normal job.
+    case cancelPassThrough
+}
+
+/// Pure decision for the recorder's local monitor. Recording suspends the
+/// Vietnamese engine system-wide, so any event that signals "the user is
+/// doing something else" must end it instead of being captured as the key.
+public enum SwitchKeyRecorder {
+    private static let escapeKeyCode: UInt16 = 53
+
+    /// Precedence: Escape first (it is the documented cancel key and is never
+    /// a valid hot key, so it is consumed even with ⌘ held), then any ⌘
+    /// chord (⌘ belongs to the combo through the checkboxes — the recorder
+    /// captures only the key — so a ⌘ chord is treated as an app shortcut),
+    /// and everything else is recorded. Shift/Option/Control do not matter:
+    /// only the keyCode is stored.
+    public static func action(keyCode: UInt16, modifiers: ModifierSet) -> SwitchKeyRecorderAction {
+        if keyCode == escapeKeyCode { return .cancelConsume }
+        if modifiers.contains(.command) { return .cancelPassThrough }
+        return .record
+    }
+}
+
 extension ModifierSet {
     /// Carbon's `cmdKey`/`shiftKey`/`optionKey`/`controlKey` bit values
     /// (`Carbon.HIToolbox`'s `Events.h`), reproduced here as raw integers so
