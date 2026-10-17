@@ -19,6 +19,12 @@ struct Macro: Identifiable, Codable, Hashable {
     /// letter at a sentence start (also needs AppModel's global toggle on).
     var autoCapitalize: Bool = false
 
+    /// Explicit keys (same names the synthesized coder used) so the encoded
+    /// output is unchanged and old macros.json files / exports round-trip.
+    enum CodingKeys: String, CodingKey {
+        case id, trigger, replacement, enabled, expandInEnglishMode, autoCapitalize
+    }
+
     func toRule() -> MacroRule {
         MacroRule(
             trigger: trigger,
@@ -30,6 +36,32 @@ struct Macro: Identifiable, Codable, Hashable {
     }
 }
 
+extension Macro {
+    /// Tolerant decoding: every field is optional and falls back to the
+    /// property default (a missing `id` gets a fresh UUID), so a file written
+    /// by an older/newer build or a hand-edited export still loads instead of
+    /// failing the whole list. Lives in an extension to keep the memberwise init.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init()
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        trigger = try c.decodeIfPresent(String.self, forKey: .trigger) ?? trigger
+        replacement = try c.decodeIfPresent(String.self, forKey: .replacement) ?? replacement
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? enabled
+        expandInEnglishMode = try c.decodeIfPresent(Bool.self, forKey: .expandInEnglishMode) ?? expandInEnglishMode
+        autoCapitalize = try c.decodeIfPresent(Bool.self, forKey: .autoCapitalize) ?? autoCapitalize
+    }
+}
+
+enum MacroImportMode { case merge, replace }
+
+enum MacroImportError: LocalizedError {
+    case noMacrosFound
+    var errorDescription: String? {
+        "Không tìm thấy gõ tắt nào trong tệp này."
+    }
+}
+
 @Observable
 @MainActor
 final class MacroStore {
@@ -37,6 +69,14 @@ final class MacroStore {
     private static let log = Logger(subsystem: "com.tanta.keystone", category: "MacroStore")
 
     var macros: [Macro] = []
+
+    /// Vietnamese warning shown at the top of the editor when macros.json
+    /// existed but could not be read (nil = all good).
+    var loadIssue: String?
+
+    /// True when macros.json is unreadable AND could not be backed up: save()
+    /// must not write, or it would destroy the only copy of the user's data.
+    private var saveBlocked = false
 
     /// Notified after every `save()` (success or failure — the in-memory
     /// `macros` list is authoritative regardless), so the app can re-push
@@ -89,51 +129,98 @@ final class MacroStore {
             let data = try Data(contentsOf: fileURL)
             macros = try JSONDecoder().decode([Macro].self, from: data)
         } catch {
-            // A corrupt/unreadable file must NOT silently look like "no macros" —
-            // keep the current list and log so the failure is visible.
             Self.log.error("load macros failed (\(self.fileURL.path, privacy: .public)): \(error.localizedDescription, privacy: .public)")
+            preserveUnreadableFile()
+        }
+    }
+
+    /// The existing macros.json could not be read. Copy it (never move or
+    /// delete the original) to a timestamped sibling so a later save() of the
+    /// empty in-memory list cannot lose the user's data. If even the copy
+    /// fails, block saving so the original stays untouched.
+    private func preserveUnreadableFile() {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let backupName = "macros.json.unreadable-\(formatter.string(from: Date()))"
+        let backupURL = fileURL.deletingLastPathComponent().appendingPathComponent(backupName)
+        do {
+            try FileManager.default.copyItem(at: fileURL, to: backupURL)
+            Self.log.error("backed up unreadable macros file to \(backupURL.path, privacy: .public)")
+            loadIssue = "Không đọc được tệp gõ tắt đã lưu. Bản gốc được giữ lại ở \(backupName) (cùng thư mục dữ liệu của Keystone)."
+        } catch {
+            saveBlocked = true
+            Self.log.error("backup of unreadable macros file failed (\(backupURL.path, privacy: .public)): \(error.localizedDescription, privacy: .public); saving is disabled")
+            loadIssue = "Không đọc được tệp gõ tắt đã lưu và không sao lưu được: thay đổi sẽ không được lưu."
         }
     }
 
     func save() {
-        do {
-            let data = try JSONEncoder().encode(macros)
-            try data.write(to: fileURL, options: .atomic)
-        } catch {
-            Self.log.error("save macros failed (\(self.fileURL.path, privacy: .public)): \(error.localizedDescription, privacy: .public)")
+        if saveBlocked {
+            Self.log.error("save macros skipped: macros.json is unreadable and could not be backed up (\(self.fileURL.path, privacy: .public))")
+        } else {
+            do {
+                let data = try JSONEncoder().encode(macros)
+                try data.write(to: fileURL, options: .atomic)
+            } catch {
+                Self.log.error("save macros failed (\(self.fileURL.path, privacy: .public)): \(error.localizedDescription, privacy: .public)")
+            }
         }
         onChange?()
     }
 
-    /// Accepts either our own JSON export or a legacy OpenKey macro file
-    /// (tab-separated `trigger<TAB>replacement` per line, e.g. a `.txt`
-    /// export). Content is sniffed by trying JSON first — if decoding
-    /// throws, the same bytes are re-parsed as tab-separated text rather
-    /// than treating the JSON failure as a hard error.
-    func importFile(_ url: URL) throws {
+    /// Read a macro file WITHOUT touching the list. Accepts our own JSON
+    /// export (JSON tried first, tolerant decoding) or a text file: OpenKey's
+    /// `name:content` export or the legacy tab-separated format (UTF-8, or
+    /// UTF-16 when the data starts with a UTF-16 BOM). Throws when no usable
+    /// macro is found so a bad file can never wipe or change the list.
+    func parseImportFile(_ url: URL) throws -> [MacroRule] {
         let data = try Data(contentsOf: url)
+        let jsonError: Error
         do {
-            macros = try JSONDecoder().decode([Macro].self, from: data)
-        } catch let jsonError {
-            guard let text = String(data: data, encoding: .utf8) else {
-                throw jsonError   // not JSON and not decodable text — surface the original failure
-            }
-            let parsed = MacroTable.parseTabSeparated(text)
-            // A file that is neither valid JSON nor a tab-separated macro list
-            // must NOT silently wipe the user's existing macros — surface the
-            // original decode failure instead of replacing with an empty list.
-            guard !parsed.isEmpty else { throw jsonError }
-            macros = parsed.map { rule in
-                Macro(
-                    trigger: rule.trigger,
-                    replacement: rule.replacement,
-                    enabled: rule.enabled,
-                    expandInEnglishMode: rule.expandInEnglishMode,
-                    autoCapitalize: rule.autoCapitalize
-                )
-            }
+            let rules = try JSONDecoder().decode([Macro].self, from: data).map { $0.toRule() }
+            if !rules.isEmpty { return rules }
+            jsonError = MacroImportError.noMacrosFound
+        } catch {
+            jsonError = error
+        }
+        // Valid JSON that was merely empty: nothing to import.
+        if jsonError is MacroImportError { throw jsonError }
+        guard let text = Self.decodeText(data) else { throw jsonError }
+        let rules = MacroTable.parseLegacyText(text)
+        guard !rules.isEmpty else { throw MacroImportError.noMacrosFound }
+        return rules
+    }
+
+    private static func decodeText(_ data: Data) -> String? {
+        if let utf8 = String(data: data, encoding: .utf8) { return utf8 }
+        let isUTF16BOM = data.starts(with: [0xFF, 0xFE]) || data.starts(with: [0xFE, 0xFF])
+        return isUTF16BOM ? String(data: data, encoding: .utf16) : nil
+    }
+
+    /// Apply parsed rules. `.merge` keeps existing macros and skips triggers
+    /// already present (like OpenKey); `.replace` dedupes the incoming rules
+    /// and swaps the whole list. Imported macros always get fresh UUIDs so
+    /// re-importing our own export cannot create duplicate ids in the Table.
+    @discardableResult
+    func applyImport(_ rules: [MacroRule], mode: MacroImportMode) -> (added: Int, skipped: Int) {
+        let existing: Set<String> = mode == .merge ? Set(macros.map(\.trigger)) : []
+        let result = MacroTable.rulesToAdd(rules, existingTriggers: existing)
+        let fresh = result.toAdd.map { rule in
+            Macro(
+                trigger: rule.trigger,
+                replacement: rule.replacement,
+                enabled: rule.enabled,
+                expandInEnglishMode: rule.expandInEnglishMode,
+                autoCapitalize: rule.autoCapitalize
+            )
+        }
+        switch mode {
+        case .merge: macros.append(contentsOf: fresh)
+        case .replace: macros = fresh
         }
         save()
+        return (fresh.count, result.skippedDuplicates)
     }
 
     func exportFile(to url: URL) throws {
@@ -157,6 +244,13 @@ struct MacrosView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if let issue = store.loadIssue {
+                Label(issue, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.orange.opacity(0.12))
+            }
             Table(filtered, selection: $selection) {
                 TableColumn("Bật") { m in
                     if let b = store.binding(for: m.id) {
@@ -209,7 +303,7 @@ struct MacrosView: View {
                 Spacer()
 
                 Menu {
-                    Button("Nhập gõ tắt (JSON hoặc OpenKey .txt)…") { importJSON() }
+                    Button("Nhập gõ tắt (OpenKey .txt hoặc JSON)…") { importMacros() }
                     Button("Xuất ra JSON…") { exportJSON() }
                 } label: {
                     Image(systemName: "square.and.arrow.up")
@@ -220,17 +314,47 @@ struct MacrosView: View {
         .navigationTitle("Gõ tắt")
     }
 
-    private func importJSON() {
+    /// Import flow: pick a file, parse it (errors are reported and the list is
+    /// left untouched), then merge directly when the list is empty or ask
+    /// merge / replace / cancel. Accepts our JSON export, OpenKey's `.txt`
+    /// export, and the legacy tab-separated format.
+    private func importMacros() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.json, .plainText]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        let rules: [MacroRule]
         do {
-            try store.importFile(url)
+            rules = try store.parseImportFile(url)
         } catch {
             reportError("Không nhập được gõ tắt từ tệp này", error)
+            return
         }
+
+        let mode: MacroImportMode
+        if store.macros.isEmpty {
+            mode = .merge
+        } else {
+            let ask = NSAlert()
+            ask.messageText = "Nhập \(rules.count) gõ tắt"
+            ask.informativeText = "Gộp: giữ gõ tắt hiện có, bỏ qua gõ tắt trùng tên (giống OpenKey). Thay thế: xoá toàn bộ \(store.macros.count) gõ tắt hiện có rồi nhập mới."
+            ask.addButton(withTitle: "Gộp")
+            ask.addButton(withTitle: "Thay thế toàn bộ")
+            ask.addButton(withTitle: "Huỷ")
+            switch ask.runModal() {
+            case .alertFirstButtonReturn: mode = .merge
+            case .alertSecondButtonReturn: mode = .replace
+            default: return
+            }
+        }
+
+        let result = store.applyImport(rules, mode: mode)
+        let done = NSAlert()
+        done.messageText = "Đã thêm \(result.added) gõ tắt, bỏ qua \(result.skipped) gõ tắt trùng."
+        done.alertStyle = .informational
+        done.runModal()
     }
 
     private func exportJSON() {
