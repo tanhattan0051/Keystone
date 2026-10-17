@@ -177,25 +177,92 @@ public struct MacroTable: Sendable, Equatable {
     }
 
     /// Which of `incoming` to append to a list that already has
-    /// `existingTriggers` (OpenKey's append mode: an existing name is kept,
-    /// the first occurrence in the file wins). Empty triggers are dropped
-    /// silently and are NOT counted as duplicates. Order and flags preserved.
+    /// `existingTriggers` (OpenKey's append mode: an existing name is kept).
+    /// Within the incoming list a repeated trigger keeps its FIRST ENABLED
+    /// occurrence, placed at the first occurrence's position (if none is
+    /// enabled, the first one): `MacroTable.init` fires the last enabled rule
+    /// for a trigger, so keeping a disabled first duplicate would silently
+    /// turn off an export/re-import of "disabled vn, then enabled vn".
+    /// Empty triggers are dropped silently and are NOT counted as duplicates.
+    /// Order and flags preserved; `skippedDuplicates` counts every dropped repeat.
     public static func rulesToAdd(
         _ incoming: [MacroRule],
         existingTriggers: Set<String>
     ) -> (toAdd: [MacroRule], skippedDuplicates: Int) {
-        var seen = existingTriggers
+        var positionByTrigger: [String: Int] = [:]
         var toAdd: [MacroRule] = []
         var skipped = 0
         for rule in incoming where !rule.trigger.isEmpty {
-            if seen.insert(rule.trigger).inserted {
-                toAdd.append(rule)
-            } else {
+            if existingTriggers.contains(rule.trigger) {
                 skipped += 1
+            } else if let position = positionByTrigger[rule.trigger] {
+                if !toAdd[position].enabled && rule.enabled { toAdd[position] = rule }
+                skipped += 1
+            } else {
+                positionByTrigger[rule.trigger] = toAdd.count
+                toAdd.append(rule)
             }
         }
         return (toAdd, skipped)
     }
+
+    // MARK: - Import dispatch (JSON vs text)
+
+    /// Only rules that can ever be stored: a non-empty trigger. Tolerant JSON
+    /// decoding turns ANY array of objects into rules, so a file with the
+    /// wrong keys yields rules with empty triggers; those must not count as
+    /// "something to import".
+    public static func usableRules(_ rules: [MacroRule]) -> [MacroRule] {
+        rules.filter { !$0.trigger.isEmpty }
+    }
+
+    /// True when the first non-whitespace character (after an optional BOM)
+    /// is `[` or `{`. Such a file is JSON: if it fails to decode, the JSON
+    /// error must be reported rather than text-parsing the broken JSON, which
+    /// would import lines like `    "trigger": ...` as macros. Also sees
+    /// through a UTF-16 BOM (the NUL bytes are skipped).
+    public static func looksLikeJSON(_ bytes: [UInt8]) -> Bool {
+        var content = bytes[...]
+        if content.starts(with: [0xEF, 0xBB, 0xBF]) {
+            content = content.dropFirst(3)
+        } else if content.starts(with: [0xFF, 0xFE]) || content.starts(with: [0xFE, 0xFF]) {
+            content = content.dropFirst(2)
+        }
+        let whitespace: Set<UInt8> = [0x20, 0x09, 0x0A, 0x0D, 0x00]
+        guard let first = content.first(where: { !whitespace.contains($0) }) else { return false }
+        return first == UInt8(ascii: "[") || first == UInt8(ascii: "{")
+    }
+
+    /// Turn a macro file's bytes into usable rules. The JSON decode and the
+    /// bytes-to-text decode live in the app (they need its `Macro` type and
+    /// Foundation), so they are passed in; the dispatch decision is here so
+    /// it is unit-tested:
+    /// - JSON-looking data is decoded as JSON only; a decode error propagates.
+    /// - anything else is parsed as OpenKey / tab-separated text.
+    /// - zero usable rules (empty trigger) throws `.noMacrosFound`.
+    public static func importRules(
+        from bytes: [UInt8],
+        decodeJSON: ([UInt8]) throws -> [MacroRule],
+        decodeText: ([UInt8]) -> String?
+    ) throws -> [MacroRule] {
+        let rules: [MacroRule]
+        if looksLikeJSON(bytes) {
+            rules = try decodeJSON(bytes)
+        } else {
+            guard let text = decodeText(bytes) else { throw MacroImportFailure.unreadableText }
+            rules = parseLegacyText(text)
+        }
+        let usable = usableRules(rules)
+        guard !usable.isEmpty else { throw MacroImportFailure.noMacrosFound }
+        return usable
+    }
+}
+
+/// Why `MacroTable.importRules` produced nothing (the app maps these to
+/// localized messages).
+public enum MacroImportFailure: Error, Equatable, Sendable {
+    case noMacrosFound
+    case unreadableText
 }
 
 // MARK: - Trigger validation
@@ -206,8 +273,9 @@ public struct MacroTable: Sendable, Equatable {
 public enum MacroTriggerProblem: Equatable, Sendable {
     case empty
     case containsWhitespace
-    /// A letter that is not ASCII a-z / A-Z (e.g. "đ", "á", "ư"): those are
-    /// composed outputs, never raw keys.
+    /// A letter that is not ASCII a-z / A-Z (e.g. "đ", "á", "ư"): normally a
+    /// composed output, not a raw key. Only a warning: on a non-US layout
+    /// (café, über) the layout can type such a letter directly.
     case nonRawLetter(Character)
     /// Not a word character for the input method, so typing it ends the word
     /// before the trigger is complete.
@@ -221,7 +289,7 @@ public enum MacroTriggerProblem: Equatable, Sendable {
         case .containsWhitespace:
             return "Gõ tắt không được chứa khoảng trắng: khoảng trắng kết thúc từ nên gõ tắt sẽ không bao giờ khớp."
         case .nonRawLetter(let ch):
-            return "Ký tự \"\(ch)\" không phải phím gõ thô nên gõ tắt sẽ không bao giờ khớp. Hãy nhập đúng các phím bạn gõ (ví dụ \"ddc\" thay cho \"đc\")."
+            return "Ký tự \"\(ch)\" thường không phải phím gõ thô nên gõ tắt có thể không khớp. Hãy nhập đúng các phím bạn gõ (ví dụ \"ddc\" thay cho \"đc\"); nếu bàn phím của bạn gõ trực tiếp được chữ này thì bỏ qua cảnh báo."
         case .boundaryCharacter(let ch):
             return "Ký tự \"\(ch)\" kết thúc từ ở kiểu gõ hiện tại nên gõ tắt sẽ không khớp khi bật tiếng Việt (chỉ có thể khớp khi tắt tiếng Việt)."
         }
