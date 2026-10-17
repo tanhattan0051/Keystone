@@ -707,9 +707,9 @@ public final class Engine {
     }
 
     /// What the screen should show WHILE the word is still being typed, for a
-    /// word `cancelledLiteralApplies` accepted. A click or a Cmd/Ctrl/Option
-    /// chord resets the engine without committing, so this display can become
-    /// the final text. Hence: once the keystroke that fired the cancel was
+    /// word `cancelledLiteralApplies` accepted. An app switch or a keyboard-focus
+    /// change resets the engine without committing (a click, chord or function
+    /// key commits it), so this display can become the final text. Hence: once the keystroke that fired the cancel was
     /// itself displayed as the RAW keys, a later key may switch the screen to
     /// the composed spelling only through the margin rule, unless the raw
     /// spelling died by that keystroke's position (the habit-cancel signature):

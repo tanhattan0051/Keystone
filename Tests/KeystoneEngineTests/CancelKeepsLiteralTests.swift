@@ -699,7 +699,7 @@ struct CancelKeepsLiteralNaturalTypingTests {
 
 @Suite("CancelKeepsLiteralMidWordDisplay")
 struct CancelKeepsLiteralMidWordDisplayTests {
-    // A mouse click, a Cmd/Ctrl/Option chord or a focus change resets the engine WITHOUT
+    // An app switch or a keyboard-focus change resets the engine WITHOUT
     // committing, so whatever the last keystroke displayed stays on screen as final text. A
     // word whose commit is right must therefore not flip to a wrong display on its way there.
     //

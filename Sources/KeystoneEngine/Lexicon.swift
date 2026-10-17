@@ -271,9 +271,9 @@ public enum RestoreDecision {
     /// the composed spelling to replace the raw one. The engine reaches it
     /// through `chooseMidWordAfterCancel`, once the keystroke that fired the
     /// cancel was itself DISPLAYED as the raw keys (`miss`) and the raw spelling
-    /// is still alive past it: a click or a Cmd/Ctrl/Option chord resets the
-    /// engine without committing, so whatever the last keystroke showed stays on
-    /// screen as final text, and a natural `missed` must not flip to `mised`
+    /// is still alive past it: an app switch or a keyboard-focus change resets
+    /// the engine without committing, so whatever the last keystroke showed stays
+    /// on screen as final text, and a natural `missed` must not flip to `mised`
     /// merely because "mise" happens to begin some word later on. Measured on
     /// 99,659 distinct out-of-corpus tokens (46.6M words of code and man pages)
     /// together with the early rule of `chooseMidWordAfterCancel`; the numbers
@@ -332,7 +332,7 @@ public enum RestoreDecision {
     /// up to and including that keystroke. With `nil` this is exactly
     /// `chooseAfterCancel(atCommit: false)`.
     ///
-    /// WHY. A click or a Cmd/Ctrl/Option chord resets the engine without
+    /// WHY. An app switch or a keyboard-focus change resets the engine without
     /// committing, so the last mid-word display can become the final text (see
     /// `chooseAfterCancel`, `composedMayWinAsPrefix`). Once the cancel key was
     /// shown raw, a later key may switch to the composed spelling only through

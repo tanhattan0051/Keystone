@@ -362,7 +362,7 @@ struct AutoCapitalizeTerminatorNeedsWhitespaceTests {
     }
 
     @Test func resetCancelsAPendingTerminator() {
-        // `Engine.reset()` (mouse click / app switch / Cmd-Ctrl-Option chord) has no actual
+        // `Engine.reset()` (app switch / keyboard-focus change / deactivation) has no actual
         // information that the next word starts a sentence, so it clears a
         // pending terminator along with the raw-key buffer.
         let result = typeWithEnter(on) { engine, apply in
@@ -408,7 +408,7 @@ private func typeInactiveWithReset(
 }
 
 // `Engine.resetInactive()` (English mode; fired by Cmd/Ctrl/Option chords
-// such as Cmd+V or Option+←) used to only clear the raw-key buffer, leaving
+// such as Cmd+V or Option+←, and by function keys) used to only clear the raw-key buffer, leaving
 // `sentencePosition` untouched — so a pending "." or a fresh engine's
 // initial sentence start survived a reset and still capitalized the next
 // macro, unlike Vietnamese mode's `reset()`, which already clears it. See
@@ -475,7 +475,7 @@ struct AutoCapitalizeResetAssumesTextBeforeCaretTests {
     @Test func terminatorReachedRightAfterAResetCanStillConfirm() {
         let result = typeWithEnter(on) { engine, apply in
             for ch in "hoa" { apply(engine.process(KeyInput(ch))) }
-            engine.reset()   // mouse click / app switch / Cmd-Ctrl-Option chord
+            engine.reset()   // app switch / keyboard-focus change / deactivation
             for ch in ". lan " { apply(engine.process(KeyInput(ch))) }
         }
         #expect(result == "hoa. Lan ")
