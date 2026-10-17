@@ -70,16 +70,21 @@ public final class EventTapController: @unchecked Sendable {
             permitAll, state: .eventSuppressionStateSuppressionInterval)
         src?.setLocalEventsFilterDuringSuppressionState(
             permitAll, state: .eventSuppressionStateRemoteMouseDrag)
-        let down = CGEvent(keyboardEventSource: src, virtualKey: 51, keyDown: true)
-        let up = CGEvent(keyboardEventSource: src, virtualKey: 51, keyDown: false)
+        let pair = Self.makeBackspacePair(source: src)
+        self.backspaceDown = pair.down
+        self.backspaceUp = pair.up
+    }
+
+    private static func makeBackspacePair(source: CGEventSource?) -> (down: CGEvent?, up: CGEvent?) {
+        let down = CGEvent(keyboardEventSource: source, virtualKey: 51, keyDown: true)
+        let up = CGEvent(keyboardEventSource: source, virtualKey: 51, keyDown: false)
         // Flags are left at the source's creation default (0x20000000 on macOS 27)
         // rather than overwritten — the same as OpenKey, and nothing here needs
         // them changed: a private-state source carries no modifier bits.
         for e in [down, up].compactMap({ $0 }) {
-            e.setIntegerValueField(.eventSourceUserData, value: Self.selfTag)
+            e.setIntegerValueField(.eventSourceUserData, value: selfTag)
         }
-        self.backspaceDown = down
-        self.backspaceUp = up
+        return (down, up)
     }
 
     /// Updates the posting-behavior snapshot (`sendEachKeystroke`,
@@ -174,7 +179,8 @@ public final class EventTapController: @unchecked Sendable {
             // synthetic events reach the focused app ahead of the click, so
             // they still land at the old caret, where the word is.
             if let edit = engine.handleMouseDown() {
-                post(edit, decision: .commitCaretMove, proxy: proxy)
+                post(edit, decision: .commitCaretMove, route: .tap(proxy),
+                     backspaceDown: backspaceDown, backspaceUp: backspaceUp)
             }
             return Unmanaged.passUnretained(event)
         }
@@ -198,17 +204,35 @@ public final class EventTapController: @unchecked Sendable {
         // recoverable by the user; a silently eaten keystroke is not.
         let raw = makeRawKey(event)
         let (suppress, edit, decision) = engine.handle(raw)
-        if let edit { post(edit, decision: decision, proxy: proxy) }
+        if let edit {
+            post(edit, decision: decision, route: .tap(proxy),
+                 backspaceDown: backspaceDown, backspaceUp: backspaceUp)
+        }
         return suppress ? nil : Unmanaged.passUnretained(event)
     }
 
-    /// Realizes an engine edit as synthetic events (key path and mouse path).
-    private func post(_ edit: EngineResult, decision: KeyDecision, proxy: CGEventTapProxy) {
+    /// Posts a commit edit from OUTSIDE the tap callback (the modifier-only
+    /// switch key is seen by AppKit monitors on the main thread, where there is
+    /// no `CGEventTapProxy`), so it goes in at session level. Our own tap sees
+    /// these events and passes them through via `selfTag`. The backspace pair is
+    /// created fresh: the shared one is being re-posted by the tap thread, and
+    /// the main thread must not post the same CGEvent objects concurrently. Not
+    /// on the per-keystroke hot path, so the two extra allocations are fine.
+    public func postFromOutsideTap(_ edit: EngineResult) {
+        let pair = Self.makeBackspacePair(source: synthSource)
+        post(edit, decision: .commitCaretMove, route: .session,
+             backspaceDown: pair.down, backspaceUp: pair.up)
+    }
+
+    /// Realizes an engine edit as synthetic events (key path, mouse path and
+    /// `postFromOutsideTap`).
+    private func post(_ edit: EngineResult, decision: KeyDecision, route: Route,
+                      backspaceDown: CGEvent?, backspaceUp: CGEvent?) {
         // One cheap lock acquire per edit (not per raw keystroke that
         // passes through untouched) — acceptable on the hot path, same
         // cost class as EngineController's config lock.
         let b = behaviorLock.withLock { behavior }
-        let sink = TapSink(source: synthSource, proxy: proxy,
+        let sink = TapSink(source: synthSource, route: route,
                            backspaceDown: backspaceDown, backspaceUp: backspaceUp,
                            textOnKeyDownOnly: b.textOnKeyDownOnly)
         KeystrokeExecutor(sink: sink).execute(
@@ -243,9 +267,23 @@ private func keystoneTapCallback(proxy: CGEventTapProxy, type: CGEventType, even
         .handle(proxy: proxy, type: type, event: event)
 }
 
+/// Where a synthetic event is injected: back through the tap's own proxy (inside
+/// the callback), or at session level (from any other thread).
+private enum Route {
+    case tap(CGEventTapProxy)
+    case session
+
+    func deliver(_ e: CGEvent) {
+        switch self {
+        case .tap(let proxy): e.tapPostEvent(proxy)
+        case .session: e.post(tap: .cgSessionEventTap)
+        }
+    }
+}
+
 private struct TapSink: EventSink {
     let source: CGEventSource?
-    let proxy: CGEventTapProxy
+    let route: Route
     let backspaceDown: CGEvent?
     let backspaceUp: CGEvent?
     /// "Sửa lỗi gợi ý" (`autoFixSuggestion`, default OFF): when true, the
@@ -259,7 +297,7 @@ private struct TapSink: EventSink {
         // Re-post the ONE pre-built pair instead of allocating a fresh CGEvent per
         // backspace inside the tap callback.
         guard let down = backspaceDown, let up = backspaceUp else { return }
-        for _ in 0..<count { down.tapPostEvent(proxy); up.tapPostEvent(proxy) }
+        for _ in 0..<count { route.deliver(down); route.deliver(up) }
     }
 
     func postText(_ text: String) {
@@ -279,7 +317,7 @@ private struct TapSink: EventSink {
         }
         for e in [down, up] {
             e.setIntegerValueField(.eventSourceUserData, value: EventTapController.selfTag)
-            e.tapPostEvent(proxy)
+            route.deliver(e)
         }
     }
 

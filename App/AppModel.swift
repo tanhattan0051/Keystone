@@ -957,8 +957,7 @@ final class AppModel {
     /// extend a selection, ⌘-click to open in a new tab, ⌥-click). Without
     /// this, releasing the modifier after such a click looks exactly like a
     /// clean chord release and spuriously toggles Vietnamese. Feeding mouse
-    /// events into `otherKeyPressed()` — same as a real keyDown — cancels
-    /// that. See DECISIONS.md "Phím chuyển".
+    /// events into `mouseDown()` cancels that. See DECISIONS.md "Phím chuyển".
     private static let switchKeyMonitoredEvents: NSEvent.EventTypeMask = [
         .flagsChanged, .keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown,
     ]
@@ -1012,8 +1011,10 @@ final class AppModel {
             if switchDetector.flagsChanged(active: modifiers) {
                 toggleVietnameseFromHotKey()
             }
-        case .keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown:
+        case .keyDown:
             switchDetector.otherKeyPressed()
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            switchDetector.mouseDown()
         default:
             break
         }
@@ -1040,6 +1041,13 @@ final class AppModel {
         guard !secureInputActive else {
             Self.log.info("switch key ignored: Secure Input is on")
             return
+        }
+        // On -> off: the switch key is a flagsChanged, so no keystroke commits
+        // the word; a bare reset left the last mid-word render ("test" -> "tét").
+        // The Carbon modifier+key path normally finds the word already
+        // committed by the chord's keyDown, so this returns nil there.
+        if enabled, let edit = controller.commitForDeactivation() {
+            tap.postFromOutsideTap(edit)
         }
         enabled.toggle()
         if switchKeyBeep { NSSound.beep() }

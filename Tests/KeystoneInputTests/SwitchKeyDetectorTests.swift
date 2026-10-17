@@ -135,4 +135,44 @@ struct SwitchKeyDetectorTests {
         #expect(detector.flagsChanged(active: [.control, .shift]) == false)   // release ⌥
         #expect(detector.flagsChanged(active: []) == false)                  // release rest
     }
+
+    // MARK: - A key typed with no modifier held is not part of any hold.
+
+    @Test func keyTypedBeforeTheChordDoesNotBlockIt() {
+        // "test" then ⌃⇧: the letters' keyDowns arrive while nothing is held.
+        var detector = SwitchKeyDetector(target: controlShift)
+        detector.otherKeyPressed()
+        #expect(detector.flagsChanged(active: [.control]) == false)
+        #expect(detector.flagsChanged(active: [.control, .shift]) == false)
+        #expect(detector.flagsChanged(active: []) == true)
+    }
+
+    @Test func editPostedRightAfterAFireDoesNotBlockTheNextChord() {
+        // Turning Vietnamese off posts the word's commit edit (synthetic
+        // keyDowns the monitors also see) after the release; an immediate ⌃⇧
+        // back on must still fire.
+        var detector = SwitchKeyDetector(target: controlShift)
+        #expect(detector.flagsChanged(active: [.control, .shift]) == false)
+        #expect(detector.flagsChanged(active: []) == true)
+        detector.otherKeyPressed()
+        detector.otherKeyPressed()
+        #expect(detector.flagsChanged(active: [.control, .shift]) == false)
+        #expect(detector.flagsChanged(active: []) == true)
+    }
+
+    @Test func mouseDownBeforeTheChordStillBlocksIt() {
+        // Monitors see no mouse-up: a drag with ⇧ (or ⌥) pressed mid-drag must
+        // not look like a clean single-modifier chord.
+        var detector = SwitchKeyDetector(target: [.shift])
+        detector.mouseDown()
+        #expect(detector.flagsChanged(active: [.shift]) == false)
+        #expect(detector.flagsChanged(active: []) == false)
+    }
+
+    @Test func mouseDownMidChordCancels() {
+        var detector = SwitchKeyDetector(target: controlShift)
+        #expect(detector.flagsChanged(active: [.control, .shift]) == false)
+        detector.mouseDown()
+        #expect(detector.flagsChanged(active: []) == false)
+    }
 }
