@@ -1429,6 +1429,10 @@ default ⌃⇧ via ⌃⌥⇧+key with ⌥ released first. The detector now track
 and
 `.defaultTargetDoesNotFireWhenOptionReleasedFirstFromThreeModifierChord`.
 
+*(Update 2026-10-17: mouse-downs now go to `SwitchKeyDetector.mouseDown()`, which taints exactly as
+before; a keyDown while NO modifier is held no longer sets `dirty`, since it belongs to no hold. See
+"Commit the word at click / chord / function-key boundaries".)*
+
 **A modifier-click must cancel an armed chord too, not just a keyDown.** The
 `NSEvent` monitors in `AppModel.installSwitchKeyMonitors()` used to watch
 only `[.flagsChanged, .keyDown]`. With a two-or-more-modifier default, a
@@ -2938,11 +2942,42 @@ The design spec already listed a click as a commit boundary (Part A §8); the co
   click there still calls `reset()`, as before.
 - `resetBuffer()`/`Engine.reset()` remain for app activation, keyboard-focus change and Secure
   Input: the text on screen is no longer ours to rewrite, and committing would type into the wrong
-  app. Deactivation also still resets, but for a different reason, and that one is a **known gap**:
-  the modifier-only switch key (⌃⇧ by default) arrives as flagsChanged, not keyDown, so there is no
-  keystroke to commit the word on. "test" + ⌃⇧ still leaves "tét" (same as before this change).
-  Fixing it means committing and posting the edit from the switch-key path before deactivating;
-  not done here.
+  app.
+- The switch key turning Vietnamese off commits too. The modifier-only switch key (⌃⇧ by default)
+  arrives as flagsChanged, not keyDown, and is detected by the `NSEvent` monitors on the main
+  thread, not in the tap, so there is no keystroke and no tap proxy to commit on: whenever the chord
+  fired, its bare reset left the last mid-word render ("test" → "tét", "users" → "úe"; but see the
+  side fix below for why the first ⌃⇧ right after a word may not have fired at all).
+  `toggleVietnameseFromHotKey()` now calls
+  `EngineController.commitForDeactivation()` (commit with `flushCaretMove()` and set `active =
+  false` under one lock, so no keystroke slips in between) and posts the edit through
+  `EventTapController.postFromOutsideTap(_:)`, the same posting helper as the key and click paths
+  but injected at session level (our own tap passes it through by `selfTag`) with a freshly built
+  Backspace pair, so the main thread never re-posts the CGEvents the tap thread is using. The
+  detector fires on the full release, which has already reached the app, but it does not move the
+  caret, so the word is still there. The `enabled` didSet's `setActive(false)` then runs on an
+  empty buffer. Off → on needs nothing. A modifier+key switch key (Carbon) normally finds the word
+  already committed by its chord's keyDown in the tap, so the call returns nil there. The menu
+  toggle, per-app state and the switch-key recorder still go through `setActive(false)`: a click
+  or an app switch has already settled the word by then.
+  Remaining race, accepted: a key typed within the few milliseconds between the release and the
+  main thread handling it is processed by the tap first, while still Vietnamese. If it is a letter,
+  it joins the word and is committed with it; if the commit wins the lock, the letter passes
+  through as English but can reach the app before the posted edit, so the edit's Backspaces would
+  land one character late. Releasing ⌃⇧ and typing within that window is not a realistic pace.
+- Side fix in `SwitchKeyDetector`: a keyDown while no modifier is held no longer taints the next
+  hold. The monitors see the synthetic keyDowns of that commit edit right after the release, and
+  `otherKeyPressed()` used to set `dirty` for the next hold regardless, so an immediate ⌃⇧ back on
+  would not fire. By the same rule, any key the monitors saw before a chord blocked it: the first ⌃⇧
+  after typing a word was ignored and only a second one toggled. (Not confirmed live; it depends on
+  the global monitor receiving keyDowns, which needs Keystone's Accessibility / Input Monitoring
+  grant.) Accepted cost: a letter key held down from before the chord until after it no longer
+  blocks it.
+  Mouse-downs are NOT relaxed the same way: they now go to a separate `mouseDown()` that taints
+  even with nothing held. The monitors never see the mouse-up, so with a single-modifier switch key
+  (⇧ or ⌥ alone is allowed) a drag with ⇧ or ⌥ pressed mid-drag would otherwise look like a clean
+  chord and toggle. The flip side is unchanged from before: a click with nothing held still blocks
+  the next chord.
 
 **Costs, stated plainly.** A click, chord or function key now runs full commit-time finalization:
 macros expand (trigger `ko` + click gives "không"), the force-English list and auto-capitalize apply,
@@ -2959,7 +2994,13 @@ the sentence position: a paste, undo or ⌘← changes what precedes the caret. 
 keycodes in `KeyTranslator`: misses every other focus-moving key. Posting the click before the edit:
 the rewrite would land at the new caret.
 
-**Pinned by** `BoundaryCommitTests` (shipped config through `EngineController`) and `TranslatorTests`.
+**Pinned by** `BoundaryCommitTests` (shipped config through `EngineController`, including the
+deactivation section: "test" → "test", "users" → "users", "tieengs" → "tiếng", nothing composing →
+nil, inactive afterwards, macro buffer dropped when already English), `SwitchKeyDetectorTests`
+(`keyTypedBeforeTheChordDoesNotBlockIt`, `editPostedRightAfterAFireDoesNotBlockTheNextChord`,
+`mouseDownBeforeTheChordStillBlocksIt`) and `TranslatorTests`. The switch-key path
+itself (monitor → post from the main thread) is integration-only: check "test" + ⌃⇧ and an immediate
+⌃⇧ back on live in TextEdit and Chrome before a release.
 
 ## VNI keeps every typed w and d; Telex `www` stays OpenKey's
 
