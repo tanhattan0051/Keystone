@@ -12,6 +12,17 @@
 // BEFORE it is ever unzipped-into-place or launched. That `guard
 // UpdateVerifier.isValid(...)` is the mandatory, non-bypassable gate for the
 // whole feature — see the comment at its call site below.
+//
+// INSTALL FLOW (after the signature gate): unzip into a work dir, then
+// cross-check the extracted bundle against the offered release (bundle id,
+// version == tag, version > running — the signature alone cannot stop a
+// replayed OLD signed zip under a NEWER tag), `codesign --verify`, strip
+// quarantine, make sure the install folder is writable, write the helper
+// script INTO the work dir and launch it detached, and only then quit. The
+// script (UpdateInstallScript) waits for us to exit, copies the new bundle
+// next to the installed one, re-verifies it, swaps with two renames, and
+// rolls back + relaunches the old bundle on any failure. Log:
+// ~/Library/Logs/Keystone/update.log.
 
 import Foundation
 import AppKit
@@ -75,7 +86,10 @@ final class Updater {
             return
         }
 
-        guard let release = ReleaseInfo.parse(latestReleaseJSON: data) else {
+        guard
+            let currentSemVer = SemVer(currentVersion),
+            let release = ReleaseInfo.parse(latestReleaseJSON: data)
+        else {
             Self.log.error("Latest-release response could not be parsed (missing tag/assets or malformed JSON)")
             if userInitiated {
                 showAlert("Không kiểm tra được bản cập nhật", informativeText: "Không đọc được thông tin bản phát hành từ GitHub.")
@@ -90,10 +104,10 @@ final class Updater {
             return
         }
 
-        promptToInstall(release)
+        promptToInstall(release, currentVersion: currentSemVer)
     }
 
-    private func promptToInstall(_ release: ReleaseInfo) {
+    private func promptToInstall(_ release: ReleaseInfo, currentVersion: SemVer) {
         let alert = NSAlert()
         alert.messageText = "Có bản mới v\(release.version). Cập nhật ngay?"
         alert.alertStyle = .informational
@@ -102,11 +116,11 @@ final class Updater {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         Task { [weak self] in
-            await self?.downloadAndInstall(release)
+            await self?.downloadAndInstall(release, currentVersion: currentVersion)
         }
     }
 
-    private func downloadAndInstall(_ info: ReleaseInfo) async {
+    private func downloadAndInstall(_ info: ReleaseInfo, currentVersion: SemVer) async {
         let zipData: Data
         let signatureBase64: String
         do {
@@ -137,7 +151,7 @@ final class Updater {
         }
 
         do {
-            try installVerifiedUpdate(zipData: zipData)
+            try installVerifiedUpdate(zipData: zipData, release: info, currentVersion: currentVersion)
         } catch {
             Self.log.error("Update install failed: \(error.localizedDescription, privacy: .public)")
             showAlert("Cài đặt cập nhật thất bại", informativeText: error.localizedDescription)
@@ -154,11 +168,29 @@ final class Updater {
     }
 
     /// `zipData` has ALREADY passed `UpdateVerifier.isValid` by the time this
-    /// is called — never call this on unverified bytes.
-    private func installVerifiedUpdate(zipData: Data) throws {
+    /// is called — never call this on unverified bytes. Quits the app only
+    /// after the install helper has launched; any earlier failure removes the
+    /// work dir and leaves the running app untouched.
+    private func installVerifiedUpdate(zipData: Data, release: ReleaseInfo, currentVersion: SemVer) throws {
         let fm = FileManager.default
         let workDir = fm.temporaryDirectory.appendingPathComponent("KeystoneUpdate-\(UUID().uuidString)", isDirectory: true)
-        try fm.createDirectory(at: workDir, withIntermediateDirectories: true)
+
+        do {
+            try fm.createDirectory(at: workDir, withIntermediateDirectories: true)
+            try stageAndLaunchInstallHelper(zipData: zipData, release: release, currentVersion: currentVersion, workDir: workDir)
+        } catch {
+            removeWorkDir(workDir)
+            throw error
+        }
+
+        Self.log.info("Update verified and staged; quitting so the install helper can swap the bundle")
+        AppModel.shared.quit()
+    }
+
+    /// Unzips, validates the extracted bundle and launches the detached
+    /// install script. Throws before launching if anything is off.
+    private func stageAndLaunchInstallHelper(zipData: Data, release: ReleaseInfo, currentVersion: SemVer, workDir: URL) throws {
+        let fm = FileManager.default
 
         let zipPath = workDir.appendingPathComponent("Keystone.zip")
         do {
@@ -175,6 +207,27 @@ final class Updater {
             throw UpdaterError.appNotFoundInDownload
         }
 
+        // The signature only proves the zip was once genuinely signed; check
+        // the bundle really is the build this release advertises (blocks a
+        // replayed old signed zip served under a newer tag).
+        guard let expectedBundleIdentifier = Bundle.main.bundleIdentifier else {
+            throw UpdaterError.currentBundleNotFound
+        }
+        let staged = try readStagedInfo(of: extractedApp)
+        let check = UpdateCheck.validateStagedBundle(
+            bundleIdentifier: staged.bundleIdentifier,
+            shortVersion: staged.shortVersion,
+            expectedBundleIdentifier: expectedBundleIdentifier,
+            offeredVersion: release.version,
+            currentVersion: currentVersion
+        )
+        guard check == .ok else {
+            Self.log.error("Staged bundle rejected: \(String(describing: check), privacy: .public)")
+            throw UpdaterError.stagedBundleRejected(check.userMessage)
+        }
+
+        try runProcess("/usr/bin/codesign", ["--verify", "--deep", "--strict", extractedApp.path])
+
         try runProcess("/usr/bin/xattr", ["-dr", "com.apple.quarantine", extractedApp.path])
 
         let currentBundleURL = Bundle.main.bundleURL
@@ -182,10 +235,40 @@ final class Updater {
             throw UpdaterError.currentBundleNotFound
         }
 
-        try launchRelaunchHelper(newAppPath: extractedApp.path, currentBundlePath: currentBundleURL.path)
+        // The script renames siblings next to the installed bundle, so that
+        // folder must be writable. Checked BEFORE quitting: an app
+        // translocated by Gatekeeper or sitting in a root-owned folder can't
+        // be updated, and the user must not lose the running app for it.
+        let installFolder = currentBundleURL.deletingLastPathComponent()
+        guard fm.isWritableFile(atPath: installFolder.path) else {
+            throw UpdaterError.installFolderNotWritable(installFolder.path)
+        }
 
-        Self.log.info("Update verified and staged; quitting so the relaunch helper can swap the bundle")
-        AppModel.shared.quit()
+        try launchInstallHelper(newAppPath: extractedApp.path, installedAppPath: currentBundleURL.path, expectedBundleIdentifier: expectedBundleIdentifier, expectedVersion: release.version, workDir: workDir)
+    }
+
+    /// Reads Info.plist directly (not `Bundle(url:)`, which caches).
+    private func readStagedInfo(of app: URL) throws -> (bundleIdentifier: String?, shortVersion: String?) {
+        let plistURL = app.appendingPathComponent("Contents/Info.plist")
+        let data: Data
+        do {
+            data = try Data(contentsOf: plistURL)
+        } catch {
+            throw UpdaterError.stagedBundleRejected("Không đọc được Info.plist của bản tải về: \(error.localizedDescription)")
+        }
+        let object = try? PropertyListSerialization.propertyList(from: data, format: nil)
+        guard let plist = object as? [String: Any] else {
+            throw UpdaterError.stagedBundleRejected("Info.plist của bản tải về không hợp lệ")
+        }
+        return (plist["CFBundleIdentifier"] as? String, plist["CFBundleShortVersionString"] as? String)
+    }
+
+    private func removeWorkDir(_ workDir: URL) {
+        do {
+            try FileManager.default.removeItem(at: workDir)
+        } catch {
+            Self.log.error("Could not remove update work dir \(workDir.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private func findKeystoneApp(in directory: URL) throws -> URL? {
@@ -193,31 +276,32 @@ final class Updater {
         return contents.first { $0.lastPathComponent == "Keystone.app" }
     }
 
-    /// Writes a small shell script that waits for THIS process to exit (a
-    /// running app bundle can't overwrite itself), then swaps the bundle in
-    /// place and reopens it — and launches it detached via `Process` so it
-    /// keeps running after this process quits.
-    private func launchRelaunchHelper(newAppPath: String, currentBundlePath: String) throws {
+    /// Writes the install script INTO the work dir (so its own cleanup
+    /// removes it too) and launches it detached via `Process` so it keeps
+    /// running after this process quits. The script itself waits for this
+    /// process to exit (a running bundle can't be replaced), swaps
+    /// atomically and rolls back on failure — see UpdateInstallScript.
+    private func launchInstallHelper(newAppPath: String, installedAppPath: String, expectedBundleIdentifier: String, expectedVersion: SemVer, workDir: URL) throws {
         let fm = FileManager.default
-        let scriptURL = fm.temporaryDirectory.appendingPathComponent("keystone-relaunch-\(UUID().uuidString).sh")
-        let pid = ProcessInfo.processInfo.processIdentifier
+        guard let libraryDir = fm.urls(for: .libraryDirectory, in: .userDomainMask).first else {
+            throw UpdaterError.cannotWriteTempFile("không tìm thấy thư mục Library")
+        }
+        let logFile = libraryDir.appendingPathComponent("Logs/Keystone/update.log")
 
-        // Every path is quoted (single-quote escaping) even though these
-        // come from Bundle.main / the verified zip, not attacker input — a
-        // stray space must never break the script.
-        let script = """
-        #!/bin/bash
-        while kill -0 \(pid) 2>/dev/null; do
-            sleep 0.2
-        done
-        rm -rf \(shellQuoted(currentBundlePath))
-        ditto \(shellQuoted(newAppPath)) \(shellQuoted(currentBundlePath))
-        open \(shellQuoted(currentBundlePath))
-        """
+        let script = UpdateInstallScript.make(
+            waitForPID: ProcessInfo.processInfo.processIdentifier,
+            stagedAppPath: newAppPath,
+            installedAppPath: installedAppPath,
+            workDirPath: workDir.path,
+            expectedBundleIdentifier: expectedBundleIdentifier,
+            expectedVersion: expectedVersion.description,
+            logFilePath: logFile.path
+        )
 
+        let scriptURL = workDir.appendingPathComponent("install.sh")
         do {
             try script.write(to: scriptURL, atomically: true, encoding: .utf8)
-            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+            try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: scriptURL.path)
         } catch {
             throw UpdaterError.cannotWriteTempFile(error.localizedDescription)
         }
@@ -225,15 +309,14 @@ final class Updater {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
         process.arguments = [scriptURL.path]
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
         do {
             try process.run()
         } catch {
             throw UpdaterError.processLaunchFailed("/bin/bash", error.localizedDescription)
         }
-    }
-
-    private func shellQuoted(_ path: String) -> String {
-        "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     @discardableResult
@@ -278,9 +361,15 @@ private enum UpdaterError: LocalizedError {
     case processExitedNonZero(String, Int32, String)
     case appNotFoundInDownload
     case currentBundleNotFound
+    case stagedBundleRejected(String)
+    case installFolderNotWritable(String)
 
     var errorDescription: String? {
         switch self {
+        case .stagedBundleRejected(let message):
+            return message
+        case .installFolderNotWritable(let path):
+            return "Không ghi được vào thư mục \(path) (ứng dụng đang chạy từ vị trí tạm hoặc thư mục cần quyền quản trị). Hãy cập nhật thủ công: tải Keystone mới và kéo vào Applications."
         case .cannotWriteTempFile(let reason):
             return "Không ghi được file tạm: \(reason)"
         case .processLaunchFailed(let command, let reason):

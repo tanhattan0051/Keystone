@@ -102,4 +102,106 @@ public struct MacroTable: Sendable, Equatable {
         }
         return rules
     }
+
+    // MARK: - Import (OpenKey text files)
+
+    /// Split into lines on the LF *scalar* (a `Character` "\n" would not
+    /// break CRLF, see `parseTabSeparated`), trimming one trailing `\r`.
+    private static func lines(of text: String) -> [String] {
+        let lfScalar: Unicode.Scalar = "\n"
+        return text.unicodeScalars
+            .split(separator: lfScalar, omittingEmptySubsequences: false)
+            .map { scalarLine in
+                var line = String(String.UnicodeScalarView(scalarLine))
+                if line.hasSuffix("\r") { line.removeLast() }
+                return line
+            }
+    }
+
+    private static func strippingBOM(_ text: String) -> String {
+        text.unicodeScalars.first == "\u{FEFF}" ? String(String.UnicodeScalarView(text.unicodeScalars.dropFirst())) : text
+    }
+
+    /// Sniff the text format: a leading `;` line is OpenKey's header; else a
+    /// TAB anywhere means the legacy tab format; else assume a headerless
+    /// `name:content` list.
+    public static func detectTextFormat(_ text: String) -> MacroTextFormat {
+        let body = strippingBOM(text)
+        if let first = lines(of: body).first, first.hasPrefix(";") { return .openKey }
+        return body.unicodeScalars.contains("\t") ? .tabSeparated : .openKey
+    }
+
+    /// Parse an OpenKey export (tuyenvm/OpenKey `Macro.cpp`, `readFromFile`):
+    /// split each line at its FIRST ':'; lines without ':' are skipped. A name
+    /// that starts with ':' ends up empty after that split, so OpenKey
+    /// re-splits the content to let names like ":D" work (":D:smile" ->
+    /// ":D"/"smile", "::x" -> ":"/"x"). Empty content is allowed; empty
+    /// names are skipped.
+    ///
+    /// OpenKey drops the first line unconditionally (it is always the
+    /// header). We drop it only when it starts with ";" so a headerless
+    /// list does not lose its first macro. Duplicates are NOT removed here;
+    /// `rulesToAdd` does that against the existing list.
+    public static func parseOpenKey(_ text: String) -> [MacroRule] {
+        var allLines = lines(of: strippingBOM(text))
+        if let first = allLines.first, first.hasPrefix(";") { allLines.removeFirst() }
+
+        var rules: [MacroRule] = []
+        for line in allLines {
+            let scalars = Array(line.unicodeScalars)
+            guard let firstColon = scalars.firstIndex(of: ":") else { continue }
+            var name = Array(scalars[..<firstColon])
+            var content = Array(scalars[(firstColon + 1)...])
+            // Mirrors OpenKey's `while (name == "" && content != "")` loop.
+            while name.isEmpty, !content.isEmpty {
+                guard let colon = content.firstIndex(of: ":") else { break }
+                name.append(":")
+                name.append(contentsOf: content[..<colon])
+                content = Array(content[(colon + 1)...])
+            }
+            guard !name.isEmpty else { continue }
+            rules.append(MacroRule(
+                trigger: String(String.UnicodeScalarView(name)),
+                replacement: String(String.UnicodeScalarView(content))
+            ))
+        }
+        return rules
+    }
+
+    /// Detect the text format and parse accordingly.
+    public static func parseLegacyText(_ text: String) -> [MacroRule] {
+        switch detectTextFormat(text) {
+        case .openKey: return parseOpenKey(text)
+        case .tabSeparated: return parseTabSeparated(strippingBOM(text))
+        }
+    }
+
+    /// Which of `incoming` to append to a list that already has
+    /// `existingTriggers` (OpenKey's append mode: an existing name is kept,
+    /// the first occurrence in the file wins). Empty triggers are dropped
+    /// silently and are NOT counted as duplicates. Order and flags preserved.
+    public static func rulesToAdd(
+        _ incoming: [MacroRule],
+        existingTriggers: Set<String>
+    ) -> (toAdd: [MacroRule], skippedDuplicates: Int) {
+        var seen = existingTriggers
+        var toAdd: [MacroRule] = []
+        var skipped = 0
+        for rule in incoming where !rule.trigger.isEmpty {
+            if seen.insert(rule.trigger).inserted {
+                toAdd.append(rule)
+            } else {
+                skipped += 1
+            }
+        }
+        return (toAdd, skipped)
+    }
+}
+
+/// Text formats a macro file can be in (JSON is handled by the app layer).
+public enum MacroTextFormat: Equatable, Sendable {
+    /// OpenKey's own export: `;Compatible OpenKey ...` header, then `name:content` lines.
+    case openKey
+    /// Legacy `trigger<TAB>replacement` lines.
+    case tabSeparated
 }

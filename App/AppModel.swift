@@ -32,7 +32,7 @@ import ServiceManagement
 import KeystoneEngine
 import KeystoneInput
 
-private extension ModifierSet {
+extension ModifierSet {
     /// Maps AppKit's modifier flags to the platform-neutral `ModifierSet`
     /// that `SwitchKeyDetector` (KeystoneInput) works with.
     init(nsEventFlags flags: NSEvent.ModifierFlags) {

@@ -197,44 +197,87 @@ private struct BasicPane: View {
     /// (see `startRecordingKey`).
     @State private var recordingWindow: NSWindow?
 
+    /// Observer tokens for the two "user went elsewhere" cancel paths (the
+    /// recording window resigning key, the app resigning active) — removed in
+    /// `stopRecordingKey`.
+    @State private var recordingCancelObservers: [NSObjectProtocol] = []
+
     /// Arms the "Phím kèm:" recorder: a LOCAL monitor (still app-wide — a
-    /// local monitor can't be scoped to one window — but filtered to consume
-    /// only a keyDown belonging to the Control Panel window itself) that
-    /// captures the very next such keyDown (`return nil`, so it never reaches
-    /// the Control Panel) and stores it on `model.switchHotKey.key`. Escape
-    /// cancels — captured as "the next key", like any other, but deliberately
-    /// discarded rather than recorded. A keyDown belonging to a DIFFERENT
-    /// Keystone window (e.g. "Chuyển mã"/"Gõ tắt", opened while this pane is
-    /// merely still in the view hierarchy and not visible, so `onDisappear`
-    /// hasn't fired) is passed through untouched instead of being swallowed.
+    /// local monitor can't be scoped to one window — but filtered to act only
+    /// on a keyDown belonging to the Control Panel window itself) that
+    /// captures the very next such keyDown and stores it on
+    /// `model.switchHotKey.key`. What each keyDown does is decided by the
+    /// pure `SwitchKeyRecorder.action`: a plain key is recorded (and consumed,
+    /// so it never reaches the Control Panel); Escape cancels and is consumed;
+    /// a ⌘ chord (⌘W / ⌘Q / ⌘,) cancels but is passed through so the shortcut
+    /// still works. A keyDown belonging to a DIFFERENT Keystone window (e.g.
+    /// "Chuyển mã"/"Gõ tắt", opened while this pane is merely still in the
+    /// view hierarchy and not visible, so `onDisappear` hasn't fired) is
+    /// passed through untouched instead of being swallowed.
     ///
     /// `model.beginSwitchKeyRecording()` suspends the Vietnamese engine for
     /// the duration: with it active, a plain key is suppressed and
     /// re-synthesized as a DIFFERENT event (keyCode 0) before this monitor
     /// ever sees it, so the recorder would capture the wrong key — see
     /// `AppModel.beginSwitchKeyRecording()`/DECISIONS.md.
+    ///
+    /// That suspension is SYSTEM-WIDE while the menu bar still shows "V"
+    /// (`enabled` is untouched), so recording must never outlive the user's
+    /// attention: it also cancels when the recording window resigns key or
+    /// the app resigns active (the user clicked into another app — otherwise
+    /// the engine would stay off indefinitely and Vietnamese typing would
+    /// silently stop working everywhere). And it refuses to start without a
+    /// key window, since there would be nothing to watch.
     private func startRecordingKey() {
         guard !isRecordingKey else { return }
+        guard let window = NSApp.keyWindow else { return }
         isRecordingKey = true
-        recordingWindow = NSApp.keyWindow
+        recordingWindow = window
         model.beginSwitchKeyRecording()
         keyRecorderMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { event in
             guard event.window === recordingWindow else { return event }
-            defer { stopRecordingKey() }
-            guard event.keyCode != 53 else { return nil }   // Escape cancels
-            var hotKey = model.switchHotKey
-            hotKey.key = SwitchHotKey.Key(
+            let action = SwitchKeyRecorder.action(
                 keyCode: UInt16(event.keyCode),
-                label: SwitchHotKey.keyLabel(forKeyCode: UInt16(event.keyCode), characters: event.charactersIgnoringModifiers ?? "")
+                modifiers: ModifierSet(nsEventFlags: event.modifierFlags)
             )
-            model.switchHotKey = hotKey
-            return nil
+            switch action {
+            case .record:
+                defer { stopRecordingKey() }
+                var hotKey = model.switchHotKey
+                hotKey.key = SwitchHotKey.Key(
+                    keyCode: UInt16(event.keyCode),
+                    label: SwitchHotKey.keyLabel(forKeyCode: UInt16(event.keyCode), characters: event.charactersIgnoringModifiers ?? "")
+                )
+                model.switchHotKey = hotKey
+                return nil
+            case .cancelConsume:
+                stopRecordingKey()
+                return nil
+            case .cancelPassThrough:
+                stopRecordingKey()
+                return event
+            }
         }
+        // Delivered on the main queue, so assuming main-actor isolation is safe.
+        let center = NotificationCenter.default
+        recordingCancelObservers = [
+            center.addObserver(forName: NSWindow.didResignKeyNotification, object: window, queue: .main) { _ in
+                MainActor.assumeIsolated { stopRecordingKey() }
+            },
+            center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { stopRecordingKey() }
+            },
+        ]
     }
 
+    /// Idempotent: every cancel path (key captured, Escape, ⌘ chord, window
+    /// or app resigning, `onDisappear`) funnels here, and the engine is
+    /// restored exactly once per `beginSwitchKeyRecording()`.
     private func stopRecordingKey() {
         if let monitor = keyRecorderMonitor { NSEvent.removeMonitor(monitor) }
         keyRecorderMonitor = nil
+        for observer in recordingCancelObservers { NotificationCenter.default.removeObserver(observer) }
+        recordingCancelObservers = []
         recordingWindow = nil
         if isRecordingKey { model.endSwitchKeyRecording() }
         isRecordingKey = false
