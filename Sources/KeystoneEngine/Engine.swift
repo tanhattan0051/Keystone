@@ -149,13 +149,15 @@ public final class Engine {
 
     /// Drops the composing word WITHOUT finalizing it: whatever the last render
     /// showed stays on screen as-is. Only for when the text on screen is not
-    /// ours to rewrite (deactivation, English-mode click). A click or a
+    /// ours to rewrite: deactivation, app switch / keyboard-focus change,
+    /// Secure Input began, and a click while Vietnamese is off. A click or a
     /// Cmd/Ctrl/Option chord while active uses `flushCaretMove()` instead, so
     /// the word is committed properly (see `EngineController.handle`).
     public func reset() {
         rawKeys = []; prevUnits = []
         // `.afterReset`, NOT `.sentenceStart`: a reset fires on
-        // deactivation or an English-mode click, neither of
+        // deactivation, an app switch / keyboard-focus change, Secure Input
+        // beginning, or a click while Vietnamese is off; none of
         // which tell the engine it's actually at a sentence start — so the
         // next word must NOT auto-capitalize just because the buffer was
         // cleared. But it's also NOT plain `.midSentence`: the engine has no

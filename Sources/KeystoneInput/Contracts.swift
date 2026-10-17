@@ -57,7 +57,10 @@ public enum KeyDecision: Equatable, Sendable {
     /// exactly like a caret move (commit + forget sentence position) and the
     /// chord passes through.
     case commitChord
-    /// Anything else: pass through, engine untouched.
+    /// Any other key (function keys, keys with no printable char): passes
+    /// through. While Vietnamese is on, the controller finalizes the word
+    /// like a caret move first, since such keys can move focus. In English
+    /// mode the engine is untouched.
     case passthrough
 }
 

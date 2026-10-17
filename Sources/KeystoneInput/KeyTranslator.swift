@@ -15,7 +15,8 @@
 // seen, so they also make it forget the sentence position. Cmd/Ctrl/Option
 // chords are `.commitChord`, which the controller treats the same way.
 // Function keys and other non-printable keys are `.passthrough`; the
-// controller also finalizes the word on those, since they can move focus.
+// controller also finalizes the word on those while Vietnamese is on,
+// since they can move focus.
 public enum KeyTranslator {
     public static func decide(_ k: RawKey) -> KeyDecision {
         if k.command || k.control || k.option { return .commitChord }
