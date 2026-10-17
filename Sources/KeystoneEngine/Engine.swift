@@ -702,6 +702,7 @@ public final class Engine {
             return p.codaString.isEmpty && Phonology.onsets.contains(p.onsetString)
         }
         guard Phonology.isLegalOnset(p.onsetString, firstNucleus: p.firstNucleus) else { return false }
+        guard Phonology.isLegalQOnset(p.onsetString, nucleus: p.nucleusString) else { return false }
         guard Phonology.isLegalNucleus(p.nucleusString) else { return false }
         guard Phonology.isLegalCoda(p.codaString) else { return false }
         // A lone vowel letter with no onset, coda or tone is the letter itself

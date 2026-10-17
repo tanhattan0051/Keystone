@@ -42,7 +42,30 @@ enum Phonology {
             // .e covers both e and ê; g never legally precedes either.)
             return v != .e
         case "q", "qu":
-            return true   // qu is followed by a glide; handled at parse time
+            // Prefix-friendly on purpose ("q" is still the start of "qu" mid-word);
+            // the commit-time q/qu rules live in `isLegalQOnset`.
+            return true
+        default:
+            return true
+        }
+    }
+
+    /// Commit-time rule for the q onsets, on top of `isLegalOnset`:
+    ///  - bare "q" is invalid: Vietnamese q is only ever the "qu" glide onset
+    ///    (qua, quê), so "qas" -> "qá" is a typo or an English word, not a syllable;
+    ///  - "qu" cannot be followed by a plain o, u or ư: the o/ơ/ô nuclei exist
+    ///    only as quơ/quờ/quốc (marked), never as quo/quu/quư.
+    /// Kept out of `isLegalOnset` because that also backs onset-PREFIX checks
+    /// during eager restore, where "q" is still a valid start of "qu".
+    /// `nucleus` is the written nucleus without tone (Parsed.nucleusString), so a
+    /// marked ô/ơ is a different first letter from plain "o".
+    static func isLegalQOnset(_ onset: String, nucleus: String) -> Bool {
+        switch onset {
+        case "q":
+            return false
+        case "qu":
+            guard let first = nucleus.first else { return true }
+            return first != "o" && first != "u" && first != "ư"
         default:
             return true
         }
