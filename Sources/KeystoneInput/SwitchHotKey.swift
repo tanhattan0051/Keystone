@@ -169,14 +169,20 @@ public enum SwitchKeyRecorder {
     private static let escapeKeyCode: UInt16 = 53
 
     /// Precedence: Escape first (it is the documented cancel key and is never
-    /// a valid hot key, so it is consumed even with ⌘ held), then any ⌘
-    /// chord (⌘ belongs to the combo through the checkboxes — the recorder
-    /// captures only the key — so a ⌘ chord is treated as an app shortcut),
-    /// and everything else is recorded. Shift/Option/Control do not matter:
-    /// only the keyCode is stored.
-    public static func action(keyCode: UInt16, modifiers: ModifierSet) -> SwitchKeyRecorderAction {
+    /// a valid hot key, so it is consumed even with ⌘ held). Then ⌘: if the
+    /// combo already includes ⌘ (checkbox ticked) the user is pressing their
+    /// own chord, as in any shortcut recorder, so the key is recorded; if the
+    /// combo lacks ⌘, a ⌘ chord (⌘W / ⌘Q / ⌘,) is an app shortcut and cancels
+    /// while passing through. Everything else is recorded. Shift/Option/Control
+    /// do not matter: only the keyCode is stored, the combo's modifiers come
+    /// from the checkboxes.
+    public static func action(
+        keyCode: UInt16,
+        modifiers: ModifierSet,
+        comboModifiers: ModifierSet
+    ) -> SwitchKeyRecorderAction {
         if keyCode == escapeKeyCode { return .cancelConsume }
-        if modifiers.contains(.command) { return .cancelPassThrough }
+        if modifiers.contains(.command) && !comboModifiers.contains(.command) { return .cancelPassThrough }
         return .record
     }
 }

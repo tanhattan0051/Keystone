@@ -193,6 +193,36 @@ struct UpdateInstallScriptIntegrationTests {
         #expect(fm.fileExists(atPath: box.logFile.path))
     }
 
+    @Test func unopenableLogFileStillSwapsAndCleansUp() throws {
+        guard requireCodesign() else { return }
+        let box = try makeSandbox()
+        defer { cleanUp(box) }
+        try makeApp(at: box.installedApp, bundleID: bundleID, version: "1.0.0")
+        try makeApp(at: box.stagedApp, bundleID: bundleID, version: "2.0.0")
+        // The log directory exists but update.log is itself a directory, so
+        // `exec >>"$LOG"` fails. Keystone has already quit by then: the swap
+        // must still run, silently.
+        try fm.createDirectory(at: box.logFile, withIntermediateDirectories: true)
+
+        let result = try runScript(box, pid: try exitedPID())
+
+        #expect(result.status == 0, "\(result.output)")
+        #expect(try installedVersion(box) == "2.0.0")
+        #expect(try leftoverSiblings(box).isEmpty)
+        #expect(!fm.fileExists(atPath: box.workDir.path))
+        #expect(relaunchMarker(box) == [box.installedApp.path])
+    }
+
+    @Test func trapIsInstalledBeforeAnyStepThatCanFail() {
+        let script = UpdateInstallScript.make(
+            waitForPID: 1, stagedAppPath: "/s", installedAppPath: "/i", workDirPath: "/w",
+            expectedBundleIdentifier: "x", expectedVersion: "1", logFilePath: "/l/update.log"
+        )
+        let trapAt = script.range(of: "trap cleanup EXIT")!.lowerBound
+        let execAt = script.range(of: "exec >>")!.lowerBound
+        #expect(trapAt < execAt)
+    }
+
     @Test func wrongVersionLeavesInstalledUntouchedAndRelaunchesOld() throws {
         guard requireCodesign() else { return }
         let box = try makeSandbox()

@@ -64,14 +64,6 @@ public enum UpdateInstallScript {
         NEW="$PARENT/.Keystone-update-new-$$.app"
         OLD="$PARENT/.Keystone-update-old-$$.app"
 
-        # If the log directory cannot be created, keep going silently rather
-        # than abort: the app has already quit, and the swap must still run.
-        if /bin/mkdir -p "$(/usr/bin/dirname "$LOG")" 2>/dev/null; then
-            exec >>"$LOG" 2>&1
-        else
-            exec >/dev/null 2>&1
-        fi
-
         log() { echo "$(/bin/date '+%Y-%m-%dT%H:%M:%S') $*"; }
 
         OLD_MOVED=0
@@ -114,6 +106,18 @@ public enum UpdateInstallScript {
         }
         trap cleanup EXIT
         trap 'exit 143' HUP INT TERM
+
+        # Redirect output only AFTER the trap above exists: Keystone has already
+        # quit, so a failure here must still reach cleanup (relaunch + work dir
+        # removal). If the log cannot be opened (directory, root-owned,
+        # immutable, unwritable parent), carry on silently - the swap must
+        # still run. The braces + 2>/dev/null keep bash from aborting on the
+        # failed `exec` redirection.
+        if /bin/mkdir -p "$(/usr/bin/dirname "$LOG")" 2>/dev/null && { exec >>"$LOG"; } 2>/dev/null; then
+            exec 2>&1
+        else
+            exec >/dev/null 2>&1
+        fi
 
         log "Update started: expecting $EXPECTED_ID $EXPECTED_VERSION, waiting for pid $WAIT_PID"
 

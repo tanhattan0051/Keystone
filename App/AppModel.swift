@@ -55,8 +55,10 @@ final class AppModel {
     // MARK: - Enable / input method (existing, tap-wired)
 
     /// Vietnamese on/off, persisted so a relaunch (or login) resumes in the
-    /// state the user left. The property initializer does not run `didSet`;
-    /// `init()`'s `pushConfig()` is what hands the loaded value to the engine.
+    /// state the user left. The property initializer does not run `didSet`, and
+    /// `pushConfig()` builds only an `EngineConfig` (no active flag): the
+    /// loaded value reaches the engine via `startTap()`'s
+    /// `controller.setActive(enabled)` and the per-app restore at bootstrap.
     var enabled: Bool = AppModel.loadBool(Keys.enabled, default: true) {
         didSet {
             UserDefaults.standard.set(enabled, forKey: Keys.enabled)

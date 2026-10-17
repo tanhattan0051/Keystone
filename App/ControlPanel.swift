@@ -146,6 +146,11 @@ private struct BasicPane: View {
                         startRecordingKey()
                     }
                     .disabled(!model.switchKeyEnabled || isRecordingKey)
+                    if isRecordingKey {
+                        Text("Esc để huỷ")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     if model.switchHotKey.key != nil {
                         Button("Xoá") { clearRecordedKey() }
                             .disabled(!model.switchKeyEnabled)
@@ -215,7 +220,8 @@ private struct BasicPane: View {
     /// pure `SwitchKeyRecorder.action`: a plain key is recorded (and consumed,
     /// so it never reaches the Control Panel); Escape cancels and is consumed;
     /// a ⌘ chord (⌘W / ⌘Q / ⌘,) cancels but is passed through so the shortcut
-    /// still works. A keyDown belonging to a DIFFERENT Keystone window (e.g.
+    /// still works — unless the combo already includes ⌘, in which case the
+    /// chord is the user's own and its key is recorded. A keyDown belonging to a DIFFERENT Keystone window (e.g.
     /// "Chuyển mã"/"Gõ tắt", opened while this pane is merely still in the
     /// view hierarchy and not visible, so `onDisappear` hasn't fired) is
     /// passed through untouched instead of being swallowed.
@@ -243,7 +249,8 @@ private struct BasicPane: View {
             guard event.window === recordingWindow else { return event }
             let action = SwitchKeyRecorder.action(
                 keyCode: UInt16(event.keyCode),
-                modifiers: ModifierSet(nsEventFlags: event.modifierFlags)
+                modifiers: ModifierSet(nsEventFlags: event.modifierFlags),
+                comboModifiers: model.switchHotKey.modifiers
             )
             switch action {
             case .record:
@@ -275,7 +282,7 @@ private struct BasicPane: View {
         ]
     }
 
-    /// Idempotent: every cancel path (key captured, Escape, ⌘ chord, window
+    /// Idempotent: every cancel path (key captured, Escape, app ⌘ chord, window
     /// or app resigning, `onDisappear`) funnels here, and the engine is
     /// restored exactly once per `beginSwitchKeyRecording()`.
     private func stopRecordingKey() {

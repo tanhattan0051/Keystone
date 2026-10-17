@@ -37,6 +37,9 @@ struct MacroTriggerProblemPureTests {
     @Test func nonRawLetterMessageTellsToTypeRawKeys() {
         let message = MacroTable.triggerProblem("đc", inputMethod: .telex, expandInEnglishMode: false)?.message ?? ""
         #expect(message.contains("ddc"))
+        // Soft wording: a non-US layout can type such a letter directly.
+        #expect(!message.contains("không bao giờ"))
+        #expect(message.contains("bỏ qua"))
     }
 
     @Test func digitIsBoundaryInTelexButWordCharInVNI() {

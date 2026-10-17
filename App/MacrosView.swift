@@ -58,8 +58,12 @@ enum MacroImportMode { case merge, replace }
 
 enum MacroImportError: LocalizedError {
     case noMacrosFound
+    case unreadableText
     var errorDescription: String? {
-        "Không tìm thấy gõ tắt nào trong tệp này."
+        switch self {
+        case .noMacrosFound: return "Không tìm thấy gõ tắt nào trong tệp này."
+        case .unreadableText: return "Không đọc được tệp này dưới dạng văn bản (UTF-8 hoặc UTF-16)."
+        }
     }
 }
 
@@ -185,20 +189,19 @@ final class MacroStore {
     /// macro is found so a bad file can never wipe or change the list.
     func parseImportFile(_ url: URL) throws -> [MacroRule] {
         let data = try Data(contentsOf: url)
-        let jsonError: Error
         do {
-            let rules = try JSONDecoder().decode([Macro].self, from: data).map { $0.toRule() }
-            if !rules.isEmpty { return rules }
-            jsonError = MacroImportError.noMacrosFound
-        } catch {
-            jsonError = error
+            return try MacroTable.importRules(
+                from: Array(data),
+                decodeJSON: { bytes in
+                    try JSONDecoder().decode([Macro].self, from: Data(bytes)).map { $0.toRule() }
+                },
+                decodeText: { Self.decodeText(Data($0)) }
+            )
+        } catch MacroImportFailure.noMacrosFound {
+            throw MacroImportError.noMacrosFound
+        } catch MacroImportFailure.unreadableText {
+            throw MacroImportError.unreadableText
         }
-        // Valid JSON that was merely empty: nothing to import.
-        if jsonError is MacroImportError { throw jsonError }
-        guard let text = Self.decodeText(data) else { throw jsonError }
-        let rules = MacroTable.parseLegacyText(text)
-        guard !rules.isEmpty else { throw MacroImportError.noMacrosFound }
-        return rules
     }
 
     private static func decodeText(_ data: Data) -> String? {
@@ -215,6 +218,12 @@ final class MacroStore {
     func applyImport(_ rules: [MacroRule], mode: MacroImportMode) -> (added: Int, skipped: Int) {
         let existing: Set<String> = mode == .merge ? Set(macros.map(\.trigger)) : []
         let result = MacroTable.rulesToAdd(rules, existingTriggers: existing)
+        // Defence in depth: replacing with nothing would wipe the user's list
+        // (parseImportFile already rejects such files, but never rely on it).
+        if mode == .replace, result.toAdd.isEmpty {
+            Self.log.error("applyImport(.replace) refused: no usable rules; list left untouched")
+            return (0, result.skippedDuplicates)
+        }
         let fresh = result.toAdd.map { rule in
             Macro(
                 trigger: rule.trigger,
@@ -278,10 +287,10 @@ struct MacrosView: View {
                 }
                 .width(40)
                 TableColumn("") { m in
-                    if triggerProblem(for: m) != nil {
+                    if let problem = triggerProblem(for: m) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(.orange)
-                            .help("Gõ tắt này sẽ không bao giờ khớp")
+                            .help(problem.message)
                     }
                 }
                 .width(24)
@@ -322,6 +331,9 @@ struct MacrosView: View {
         .toolbar {
             ToolbarItemGroup {
                 Button {
+                    // A new row that the active filter hides would be selected
+                    // but invisible, so drop the filter first.
+                    query = ""
                     let m = store.add()
                     selection = [m.id]
                 } label: {
@@ -338,7 +350,7 @@ struct MacrosView: View {
                 } label: {
                     Image(systemName: "minus")
                 }
-                .disabled(selection.isEmpty)
+                .disabled(selection.isDisjoint(with: filtered.map(\.id)))
                 .help("Xoá gõ tắt đã chọn")
 
                 Spacer()
@@ -367,8 +379,11 @@ struct MacrosView: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
         let rules: [MacroRule]
+        let importableCount: Int
         do {
             rules = try store.parseImportFile(url)
+            // Deduped count, so the prompt matches what will actually be added.
+            importableCount = MacroTable.rulesToAdd(rules, existingTriggers: []).toAdd.count
         } catch {
             reportError("Không nhập được gõ tắt từ tệp này", error)
             return
@@ -379,7 +394,7 @@ struct MacrosView: View {
             mode = .merge
         } else {
             let ask = NSAlert()
-            ask.messageText = "Nhập \(rules.count) gõ tắt"
+            ask.messageText = "Nhập \(importableCount) gõ tắt"
             ask.informativeText = "Gộp: giữ gõ tắt hiện có, bỏ qua gõ tắt trùng tên (giống OpenKey). Thay thế: xoá toàn bộ \(store.macros.count) gõ tắt hiện có rồi nhập mới."
             ask.addButton(withTitle: "Gộp")
             ask.addButton(withTitle: "Thay thế toàn bộ")

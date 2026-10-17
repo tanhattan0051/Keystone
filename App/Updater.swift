@@ -321,41 +321,54 @@ private enum UpdatePipeline {
         return DownloadedUpdate(zipURL: zipURL, signatureBase64: decoded.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
-    /// Downloads to a file (not into memory) and aborts as soon as the
-    /// running byte count — or the server's declared length — exceeds
-    /// `limit`. The final on-disk size is re-checked in case the delegate
-    /// never saw an oversized progress callback.
+    /// Streams the body to `destination` and aborts as soon as the server's
+    /// declared length, or the running byte count, exceeds `limit`. A
+    /// declared length over the cap is rejected before reading any body.
+    /// (`URLSession.download(for:delegate:)` is NOT usable for this: it never
+    /// calls the task delegate's progress callbacks, so the whole body would
+    /// land on disk first.) Leaving the loop by throwing releases the
+    /// AsyncBytes, which cancels the request; the partial file is removed.
     private static func downloadCapped(from url: URL, to destination: URL, timeout: TimeInterval, limit: Int) async throws {
-        let delegate = SizeCapDownloadDelegate(limit: limit)
         let request = URLRequest(url: url, timeoutInterval: timeout)
-
-        let tempFile: URL
-        let response: URLResponse
-        do {
-            (tempFile, response) = try await URLSession.shared.download(for: request, delegate: delegate)
-        } catch {
-            // The delegate cancels the task when the cap is hit; report that
-            // as "too large" rather than the generic "cancelled".
-            if delegate.exceededLimit { throw UpdaterError.downloadTooLarge(limit) }
-            throw error
-        }
+        let (bytes, response) = try await URLSession.shared.bytes(for: request)
 
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            try? FileManager.default.removeItem(at: tempFile)  // best-effort: the system temp file is ours to drop; the real failure is thrown below
             throw URLError(.badServerResponse)
         }
-
-        let attributes = try FileManager.default.attributesOfItem(atPath: tempFile.path)
-        let actualBytes = (attributes[.size] as? NSNumber)?.int64Value ?? Int64.max
-        guard UpdateLimits.isAcceptable(byteCount: actualBytes, expectedContentLength: http.expectedContentLength, limit: limit) else {
-            try? FileManager.default.removeItem(at: tempFile)  // best-effort, see above
+        // Header can lie, so this is only the cheap early exit; the loop
+        // below enforces the real cap.
+        guard UpdateLimits.isAcceptable(byteCount: 0, expectedContentLength: http.expectedContentLength, limit: limit) else {
             throw UpdaterError.downloadTooLarge(limit)
         }
 
+        let fm = FileManager.default
+        guard fm.createFile(atPath: destination.path, contents: nil) else {
+            throw UpdaterError.cannotWriteTempFile("cannot create \(destination.lastPathComponent)")
+        }
+        let handle: FileHandle
         do {
-            try FileManager.default.moveItem(at: tempFile, to: destination)
+            handle = try FileHandle(forWritingTo: destination)
         } catch {
             throw UpdaterError.cannotWriteTempFile(error.localizedDescription)
+        }
+        defer { try? handle.close() }  // best-effort: a close failure after a completed or aborted write changes nothing we act on
+
+        do {
+            _ = try await CappedStreamWriter.write(bytes, to: handle, limit: limit)
+        } catch CappedStreamError.tooLarge {
+            removePartial(destination)
+            throw UpdaterError.downloadTooLarge(limit)
+        } catch {
+            removePartial(destination)
+            throw error
+        }
+    }
+
+    private static func removePartial(_ file: URL) {
+        do {
+            try FileManager.default.removeItem(at: file)
+        } catch {
+            updaterLog.error("Could not remove partial download \(file.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -471,37 +484,6 @@ private enum UpdatePipeline {
         }
         return output
     }
-}
-
-/// Per-task delegate that cancels a download the moment it grows past the
-/// cap, instead of letting a hostile server stream unbounded data to disk.
-private final class SizeCapDownloadDelegate: NSObject, URLSessionDownloadDelegate, Sendable {
-    private let limit: Int
-    private let exceeded = OSAllocatedUnfairLock(initialState: false)
-
-    init(limit: Int) {
-        self.limit = limit
-    }
-
-    var exceededLimit: Bool { exceeded.withLock { $0 } }
-
-    func urlSession(
-        _ session: URLSession,
-        downloadTask: URLSessionDownloadTask,
-        didWriteData bytesWritten: Int64,
-        totalBytesWritten: Int64,
-        totalBytesExpectedToWrite: Int64
-    ) {
-        // Unknown length arrives as NSURLSessionTransferSizeUnknown (-1),
-        // which `isAcceptable` treats as "no claim".
-        guard !UpdateLimits.isAcceptable(byteCount: totalBytesWritten, expectedContentLength: totalBytesExpectedToWrite, limit: limit) else { return }
-        exceeded.withLock { $0 = true }
-        downloadTask.cancel()
-    }
-
-    // Required by the protocol. The async `download(for:delegate:)` call
-    // hands the file back to the caller, so nothing to do here.
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {}
 }
 
 private enum UpdaterError: LocalizedError {
