@@ -25,6 +25,12 @@
 //     [uppercase quality byte][the *lowercase* toned-quality byte]: e.g.
 //     Ấ = 0xA2 ('Â') + 0xCA (the same byte as ấ) — 2 bytes.
 //   - đ/Đ are dedicated single bytes (0xAE / 0xA7).
+//
+// KNOWN LIMITATION: ư is byte 0xAD, which read as Latin-1 is U+00AD SOFT
+// HYPHEN. CoreText draws it zero-width, so in a font that is not a real
+// .VnTime-family TCVN3 font the letter ư looks missing. 0xAD is the standard
+// TCVN3 byte, so it is deliberately NOT changed; see DECISIONS.md
+// "Bảng mã & Converter fixes".
 struct TCVN3Table: OutputTable {
     private struct Key: Hashable { var base: BaseVowel; var mark: VowelMark; var tone: Tone }
 
@@ -136,7 +142,7 @@ struct TCVN3Table: OutputTable {
     func dStroke(upper: Bool) -> [UInt16] { [upper ? 0xA7 : 0xAE] }
 
     func plain(_ ch: Character) -> [UInt16] {
-        if let a = ch.asciiValue { return [UInt16(a)] }
+        if let ascii = asciiUnits(ch) { return ascii }
         // Every raw key / consonant the engine passes here is ASCII; this
         // fallback is defensive only and not independently byte-verified.
         return Array(String(ch).utf16)

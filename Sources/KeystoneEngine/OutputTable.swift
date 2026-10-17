@@ -10,9 +10,11 @@
 // một module bảng mã").
 //
 // `decode` turns the table's own code units back into a Swift `String` the
-// input layer can type (CGEventTap posts UTF-16, so even a legacy table's
-// raw bytes are carried as one Unicode scalar per byte, U+0000-U+00FF —
-// i.e. Latin-1 — never as an actual CP1258/TCVN3/VNI-Windows *decode*).
+// input layer can type, always ONE Unicode scalar per code unit. TCVN3 and
+// VNI-Windows carry their raw bytes as Latin-1 scalars (U+0000-U+00FF),
+// because .VnTime / VNI-* fonts draw those code points as Vietnamese letters.
+// CP1258 is the exception: it decodes to its REAL Unicode (see CP1258.swift),
+// since no macOS font remaps its Latin-1 tone bytes.
 
 protocol OutputTable {
     /// The code units for one composed vowel (base + quality mark + tone).
@@ -50,11 +52,21 @@ func asciiCode(_ ch: Character, upper: Bool) -> UInt16 {
 
 /// Byte value `b` (0-255) -> Unicode scalar U+00`b` (Latin-1), per this
 /// file's header note: legacy-table code units are carried as raw bytes
-/// disguised as Latin-1 scalars, not as an actual decode of the codepage.
+/// disguised as Latin-1 scalars, not as an actual decode of the codepage
+/// (used by TCVN3 / VNI-Windows; CP1258 has its own real decode).
 func decodeLatin1(_ units: [UInt16]) -> String {
     var view = String.UnicodeScalarView()
     for u in units {
         view.append(Unicode.Scalar(u) ?? Unicode.Scalar(0x3F)!)   // units are always 0-255 in practice
     }
     return String(view)
+}
+
+/// Code units for a Character made only of ASCII scalars, one per scalar.
+/// `Character.asciiValue` is NOT enough: "\r\n" is a single Character whose
+/// asciiValue is 0x0A, which silently turned CRLF into LF. nil = not pure ASCII.
+func asciiUnits(_ ch: Character) -> [UInt16]? {
+    let scalars = ch.unicodeScalars
+    guard scalars.allSatisfy({ $0.isASCII }) else { return nil }
+    return scalars.map { UInt16($0.value) }
 }

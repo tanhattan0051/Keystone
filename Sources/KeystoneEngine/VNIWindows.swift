@@ -124,7 +124,7 @@ struct VNIWindowsTable: OutputTable {
     func dStroke(upper: Bool) -> [UInt16] { [upper ? 0xD1 : 0xF1] }
 
     func plain(_ ch: Character) -> [UInt16] {
-        if let a = ch.asciiValue { return [UInt16(a)] }
+        if let ascii = asciiUnits(ch) { return ascii }
         // Every raw key / consonant the engine passes here is ASCII; this
         // fallback is defensive only and not independently byte-verified.
         return Array(String(ch).utf16)
