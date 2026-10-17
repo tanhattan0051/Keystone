@@ -31,6 +31,7 @@ struct RegularInflectionTests {
         #expect(!lex.containsWordOrRegularInflection("buies"))
     }
 
+    // Pure rule only: shipped `boxes` is wrong for another reason (x is the Telex tone key, not a cancel case).
     @Test("-es only after s, x, z, ch, sh, o")
     func esSuffix() {
         for w in ["presses", "mosses", "boxes", "buzzes", "churches", "wishes", "heroes"] {
@@ -54,25 +55,13 @@ struct RegularInflectionTests {
         #expect(!lex.containsWordOrRegularInflection("bitss"))
     }
 
-    @Test("-ed / -ing: stem, stem+e, undoubled consonant; stem of 3+ letters")
-    func edIng() {
-        for w in ["fussed", "fussing", "baked", "baking", "stopped", "stopping", "boxed"] {
-            #expect(lex.containsWordOrRegularInflection(w), "\(w)")
-        }
-        // 2-letter stems never count.
-        #expect(!lex.containsWordOrRegularInflection("going"))
-        #expect(!lex.containsWordOrRegularInflection("ised"))
-        #expect(!lex.containsWordOrRegularInflection("ussing"))
-    }
-
-    @Test("-ed / -ing: a tripled final consonant is the habit's extra key, not a doubled one")
-    func tripledConsonantIsNotUndoubled() {
-        let l = Lexicon(["ass", "buff", "err", "stop"])
-        for w in ["asssed", "bufffing", "errring", "bufffed"] {
+    @Test("-ed / -ing are NOT inflection rules: they collide with the OpenKey habit")
+    func edIngAreNotRules() {
+        // `neeed` (need), `bassed` (based), `lossing` (losing) are habit spellings
+        // whose stem + suffix is a word (nee+ed, bass+ed, loss+ing).
+        let l = Lexicon(["nee", "bass", "loss", "fuss", "bake", "stop"])
+        for w in ["neeed", "bassed", "lossing", "fussed", "fussing", "baked", "stopped"] {
             #expect(!l.containsWordOrRegularInflection(w), "\(w)")
-        }
-        for w in ["buffing", "erred", "stopped"] {
-            #expect(l.containsWordOrRegularInflection(w), "\(w)")
         }
     }
 

@@ -11,7 +11,7 @@ import Testing
        .enabled(if: systemDictExists, "requires /usr/share/dict/words"))
 struct ShippedInflectionTests {
     @Test("Natural inflections survive Space and the screen agrees",
-          arguments: ["carries", "presses", "errs", "mosses", "fussed"])
+          arguments: ["carries", "presses", "errs", "mosses", "purrs", "burrs", "fussed"])
     func naturalInflections(word: String) {
         #expect(screenWhileTyping(word) == word)
         #expect(typeShipped(word) == word + " ")
@@ -23,6 +23,9 @@ struct ShippedInflectionTests {
               ("keyss", "keys"), ("iss", "is"), ("hass", "has"), ("ussing", "using"),
               ("usses", "uses"), ("songss", "songs"), ("unssuspend", "unsuspend"),
               ("gooogle", "google"),
+              // -ed/-ing habit spellings: must NOT be read as stem + suffix.
+              ("neeed", "need"), ("seeed", "seed"), ("bassed", "based"), ("mixxed", "mixed"),
+              ("raissed", "raised"), ("lossing", "losing"), ("caussing", "causing"),
           ])
     func habitCancels(typed: String, expected: String) {
         #expect(typeShipped(typed) == expected + " ")

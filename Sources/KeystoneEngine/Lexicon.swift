@@ -82,9 +82,13 @@ public struct Lexicon: Sendable {
 
     /// True iff the lowercased `word` is in the lexicon, or is a REGULAR
     /// inflection of a word that is: `-ies` (carries -> carry), `-es` after
-    /// s/x/z/ch/sh/o (presses -> press), `-s` after anything else (errs -> err),
-    /// `-ed`/`-ing` (fussed -> fuss, baked -> bake, stopped -> stop; the stem
-    /// must have 3+ letters, so `going` is not "go" + "ing").
+    /// s/x/z/ch/sh/o (presses -> press), `-s` after anything else (errs -> err).
+    ///
+    /// Deliberately NO `-ed`/`-ing` rule: the OpenKey habit spells `need` as
+    /// `neeed` (nee + ed), `based` as `bassed` (bass + ed), `losing` as `lossing`
+    /// (loss + ing), so such a rule made the raw habit spelling win. Measured:
+    /// it broke ~76 habit words (need and based are the most frequent in prose)
+    /// and fixed no real word in natural typing.
     ///
     /// WHY. The system list is Webster 1934 and lacks most inflections. The
     /// cancel decision asks "is a raw spelling a word?", and for `carries` (the
@@ -118,20 +122,6 @@ public struct Lexicon: Sendable {
         if word.hasSuffix("s") {
             let stem = String(word.dropLast(1))
             if !endsInSibilant(stem) { stems.append(stem) }
-        }
-        for suffix in ["ed", "ing"] where word.hasSuffix(suffix) {
-            let stem = String(word.dropLast(suffix.count))
-            guard stem.count >= 3 else { continue }
-            var candidates = [stem, stem + "e"]
-            // stopped -> stopp -> stop. Only a DOUBLE: a run of three (`asssed`,
-            // `bufffing`) is a real double plus the one extra key of the OpenKey
-            // habit cancel, which must keep cancelling (`assed`, `buffing`).
-            let tail = Array(stem.suffix(3))
-            if tail.count >= 2, tail[tail.count - 1] == tail[tail.count - 2],
-               !(tail.count == 3 && tail[0] == tail[1]) {
-                candidates.append(String(stem.dropLast()))
-            }
-            stems += candidates.filter { $0.count >= 3 }
         }
         return stems
     }
@@ -287,7 +277,8 @@ public enum RestoreDecision {
     /// real words (`lesskey`, `onerror`, `nonbootable`, ...): a natural double
     /// letter whose composed form happens to keep matching the dictionary one
     /// letter longer. Adding -s/-ed/-es stem rules instead broke the habit case
-    /// (`thiss` read as `this` + `s`). Do not lower this without re-measuring.
+    /// (`thiss` read as `this` + `s`; `containsWordOrRegularInflection` avoids that
+    /// only because its bare `-s` rule excludes stems ending in s/x/z/ch/sh). Do not lower this without re-measuring.
     static let englishLikenessMargin = 2
 
     /// After a Telex CANCEL (`Composition.cancelled`, no tone and no vowel mark
