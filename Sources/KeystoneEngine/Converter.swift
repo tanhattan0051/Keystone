@@ -4,13 +4,16 @@
 // paths can never disagree on a single byte (a hard requirement of the
 // design spec).
 //
-// `text` for a legacy `from` table (.cp1258/.tcvn3/.vniWindows) follows the
-// same convention `OutputTable.decode` produces for the input layer: each
-// Character's scalar value IS the raw table byte (0-255, "Latin-1"), not an
-// actual decode of that codepage. That is: this is the inverse of what
-// `outputTable(for:).decode(units)` builds, so
-// `Converter.convert(Converter.convert(w, from: .unicode, to: .cp1258),
-//  from: .cp1258, to: .unicode)` round-trips (see CodeTableTests.swift).
+// Legacy table conventions (what the input layer types, and what this file
+// converts to/from):
+//   - `.cp1258` is the REAL Windows-1258 decode: precomposed quality letters
+//     (â ă ê ô ơ ư đ) followed by a combining tone mark (U+0300/0301/0309/
+//     0303/0323). Converting FROM cp1258 also accepts the older "Latin-1
+//     pseudo-byte" form (each scalar's value IS the cp1258 byte).
+//   - `.tcvn3` / `.vniWindows` output carries raw table bytes as Latin-1
+//     scalars (U+0000-U+00FF), because the .VnTime / VNI fonts read those
+//     code points directly. Any other character cannot be represented and
+//     becomes '?' (counted in `ConversionResult.substitutedCount`).
 
 public enum CaseTransform: Sendable {
     case none
@@ -18,6 +21,12 @@ public enum CaseTransform: Sendable {
     case upper       // chữ HOA
     case title       // Hoa Sau Mỗi Từ
     case sentence    // Hoa đầu câu
+}
+
+public struct ConversionResult: Sendable, Equatable {
+    public let text: String
+    /// Characters replaced by '?' (one per Character, e.g. one emoji = 1).
+    public let substitutedCount: Int
 }
 
 public enum Converter {
@@ -38,11 +47,17 @@ public enum Converter {
     /// forward — so converting FROM those two tables is UNSUPPORTED for now
     /// and returns `text` unchanged rather than risk silently wrong output.
     public static func convert(_ text: String, from: CodeTable, to: CodeTable, caseTransform: CaseTransform = .none) -> String {
+        convertDetailed(text, from: from, to: to, caseTransform: caseTransform).text
+    }
+
+    /// Same as `convert`, plus how many characters had to be replaced by '?'
+    /// because the target table (TCVN3 / VNI-Windows) cannot represent them.
+    public static func convertDetailed(_ text: String, from: CodeTable, to: CodeTable, caseTransform: CaseTransform = .none) -> ConversionResult {
         guard let nfc = decodeToNFC(text, from: from) else {
-            return text   // unsupported `from` direction — see doc comment above
+            return ConversionResult(text: text, substitutedCount: 0)   // unsupported `from` direction — see doc comment above
         }
         let cased = applyCase(nfc, caseTransform)
-        return encode(cased, to: outputTable(for: to))
+        return encode(cased, to: to)
     }
 
     // MARK: - Decode `from` table to internal NFC
@@ -65,11 +80,52 @@ public enum Converter {
         case .none: return text
         case .lower: return text.lowercased()
         case .upper: return text.uppercased()
-        case .title: return text.capitalized
-        case .sentence:
-            guard let first = text.first else { return text }
-            return String(first).uppercased() + text.dropFirst().lowercased()
+        case .title: return capitalizeWords(text)
+        case .sentence: return capitalizeSentences(text)
         }
+    }
+
+    /// Uppercase the first letter of each word; every other letter is left as
+    /// typed (`capitalized` would lowercase the rest: iPhone -> Iphone).
+    /// An apostrophe inside a word does not start a new one (don't -> Don't).
+    private static func capitalizeWords(_ text: String) -> String {
+        var out = ""
+        var inWord = false
+        for ch in text {
+            if ch.isLetter || ch.isNumber {
+                out += (!inWord && ch.isLetter) ? ch.uppercased() : String(ch)
+                inWord = true
+            } else if inWord && (ch == "'" || ch == "\u{2019}") {
+                out.append(ch)
+            } else {
+                out.append(ch)
+                inWord = false
+            }
+        }
+        return out
+    }
+
+    /// Uppercase the first letter of the text and of every sentence (after
+    /// . ! ? … or a line break), skipping spaces, quotes and opening
+    /// brackets in between. Nothing else changes.
+    private static func capitalizeSentences(_ text: String) -> String {
+        let skipped: Set<Character> = ["\"", "'", "\u{201C}", "\u{2018}", "\u{00AB}", "(", "[", "{"]
+        var out = ""
+        var atStart = true
+        for ch in text {
+            if atStart && ch.isLetter {
+                out += ch.uppercased()
+                atStart = false
+            } else {
+                out.append(ch)
+                if ch == "." || ch == "!" || ch == "?" || ch == "\u{2026}" || ch.isNewline {
+                    atStart = true
+                } else if atStart && !(ch.isWhitespace || skipped.contains(ch)) {
+                    atStart = false   // digit, symbol or closing quote: not a sentence start
+                }
+            }
+        }
+        return out
     }
 
     // MARK: - Encode internal NFC to any OutputTable
@@ -104,28 +160,61 @@ public enum Converter {
         return map
     }()
 
-    private static func encode(_ text: String, to table: OutputTable) -> String {
-        var units: [UInt16] = []
+    private static func encode(_ text: String, to code: CodeTable) -> ConversionResult {
+        let table = outputTable(for: code)
+        // TCVN3 / VNI-Windows bytes are read as Latin-1 code points by their
+        // fonts, so a stray ©/°/ü/€ would print as another Vietnamese letter.
+        let substitutes = (code == .tcvn3 || code == .vniWindows)
+        var out = ""
+        var substituted = 0
         for ch in text {
             if let (base, mark, tone, upper) = vowelReverse[ch] {
-                units += table.vowel(base: base, mark: mark, tone: tone, upper: upper)
+                out += table.decode(table.vowel(base: base, mark: mark, tone: tone, upper: upper))
             } else if ch == "đ" {
-                units += table.dStroke(upper: false)
+                out += table.decode(table.dStroke(upper: false))
             } else if ch == "Đ" {
-                units += table.dStroke(upper: true)
+                out += table.decode(table.dStroke(upper: true))
+            } else if let ascii = asciiUnits(ch) {
+                out += table.decode(ascii)   // keeps "\r\n" as two units
+            } else if substitutes {
+                out += "?"
+                substituted += 1
             } else {
-                units += table.plain(ch)
+                out.append(ch)   // Unicode / cp1258 targets carry any other character as-is
             }
         }
-        return table.decode(units)
+        return ConversionResult(text: out, substitutedCount: substituted)
     }
 
     // MARK: - CP1258 inverse (byte -> NFC)
 
-    /// Decode a "CP1258 byte string" (per this file's header convention)
-    /// back to Unicode NFC, using the inverse of CP1258Table's verified
-    /// quality-byte / tone-byte tables.
+    /// Scalars that only occur in the real-Unicode cp1258 form: combining
+    /// marks, and the precomposed letters whose Latin-1 byte value would be a
+    /// different character (ă ơ ư đ and capitals).
+    private static func looksLikeRealCP1258(_ scalars: [Unicode.Scalar]) -> Bool {
+        scalars.contains {
+            switch $0.value {
+            case 0x0300...0x036F, 0x0102, 0x0103, 0x0110, 0x0111, 0x01A0, 0x01A1, 0x01AF, 0x01B0: return true
+            default: return false
+            }
+        }
+    }
+
+    /// Decode cp1258 text back to Unicode NFC. Accepts both the real form
+    /// (precomposed quality letter + combining tone: NFC composes it) and the
+    /// older Latin-1 pseudo-byte form (see header), told apart by
+    /// `looksLikeRealCP1258`. Text with neither marker (plain ASCII, â ê ô
+    /// without tone) decodes identically under both readings.
     private static func decodeCP1258(_ text: String) -> String {
+        if looksLikeRealCP1258(Array(text.unicodeScalars)) {
+            return text.precomposedStringWithCanonicalMapping
+        }
+        return decodeCP1258PseudoBytes(text)
+    }
+
+    /// Inverse of the old convention, using CP1258Table's verified
+    /// quality-byte / tone-byte tables.
+    private static func decodeCP1258PseudoBytes(_ text: String) -> String {
         let qualityBytes: [UInt16: (BaseVowel, VowelMark, Bool)] = [
             0x61: (.a, .none, false), 0x41: (.a, .none, true),
             0xE2: (.a, .circumflex, false), 0xC2: (.a, .circumflex, true),
