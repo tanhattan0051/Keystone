@@ -13,6 +13,11 @@
 // canonical-ordering + composition algorithm reorders/composes it back to
 // the identical precomposed string — verified by CodeTableTests' round-trip
 // test), just spelled with more code units.
+//
+// Live typing: because of the canonical order, adding a dot-below tone to ậ ặ ệ ộ
+// now needs a mark-level Backspace (the circumflex/breve moves after the dot).
+// That depends on the grapheme-aware diff (session "sửa nhóm lỗi tiếng Anh",
+// item B); do not merge before it lands.
 
 struct UnicodeNFCTable: OutputTable {
     func vowel(base: BaseVowel, mark: VowelMark, tone: Tone, upper: Bool) -> [UInt16] {
