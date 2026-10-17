@@ -17,6 +17,33 @@ enum SingleInstance {
     /// if another Keystone already holds the lock.
     @discardableResult
     static func acquire() -> Bool {
+        tryAcquire()
+    }
+
+    /// Env var `AppModel.relaunch()` sets on the child it spawns. An env var
+    /// rather than a launch argument: AppKit parses `-key value` arguments as
+    /// UserDefaults overrides. Not inherited by apps started via LaunchServices.
+    static let relaunchMarkerKey = "KEYSTONE_RELAUNCHED"
+
+    /// True when this process was spawned by `AppModel.relaunch()`.
+    static var launchedByRelaunch: Bool {
+        ProcessInfo.processInfo.environment[relaunchMarkerKey] != nil
+    }
+
+    /// Like `acquire()`, but keeps retrying for up to `duration` seconds. For
+    /// a relaunched child: the parent may not have exited (released its flock)
+    /// yet. A genuine second copy must NOT get this grace, so only call it
+    /// when `launchedByRelaunch`.
+    static func acquire(retryingFor duration: TimeInterval, every interval: TimeInterval = 0.1) -> Bool {
+        let deadline = Date().addingTimeInterval(duration)
+        while !tryAcquire() {
+            if Date() >= deadline { return false }
+            Thread.sleep(forTimeInterval: interval)
+        }
+        return true
+    }
+
+    private static func tryAcquire() -> Bool {
         let fm = FileManager.default
         guard let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
             return true   // can't resolve a home dir → fail open, don't block startup
