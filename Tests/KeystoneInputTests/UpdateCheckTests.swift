@@ -299,3 +299,43 @@ struct StagedBundleValidationTests {
         #expect(StagedBundleCheck.ok.userMessage.isEmpty)
     }
 }
+
+@Suite("UpdateLimits")
+struct UpdateLimitsTests {
+    private let limit = 1_000
+
+    @Test func capsAreSane() {
+        #expect(UpdateLimits.maxZipBytes == 64 * 1024 * 1024)
+        #expect(UpdateLimits.maxSignatureBytes == 1024)
+    }
+
+    @Test func underTheLimitIsAcceptable() {
+        #expect(UpdateLimits.isAcceptable(byteCount: 999, expectedContentLength: 999, limit: limit))
+    }
+
+    @Test func exactlyAtTheLimitIsAcceptable() {
+        #expect(UpdateLimits.isAcceptable(byteCount: 1_000, expectedContentLength: 1_000, limit: limit))
+    }
+
+    @Test func oneByteOverIsRejected() {
+        #expect(!UpdateLimits.isAcceptable(byteCount: 1_001, expectedContentLength: nil, limit: limit))
+        #expect(!UpdateLimits.isAcceptable(byteCount: 0, expectedContentLength: 1_001, limit: limit))
+    }
+
+    @Test func unknownContentLengthFallsBackToActualBytes() {
+        #expect(UpdateLimits.isAcceptable(byteCount: 500, expectedContentLength: nil, limit: limit))
+        // URLResponse reports an unknown length as -1.
+        #expect(UpdateLimits.isAcceptable(byteCount: 500, expectedContentLength: -1, limit: limit))
+        #expect(!UpdateLimits.isAcceptable(byteCount: 5_000, expectedContentLength: -1, limit: limit))
+    }
+
+    @Test func contentLengthLieIsCaughtByActualBytes() {
+        // Header claims small, body is huge.
+        #expect(!UpdateLimits.isAcceptable(byteCount: 5_000, expectedContentLength: 10, limit: limit))
+    }
+
+    @Test func emptyBodyIsAcceptableHere() {
+        // Emptiness is the signature/zip verifier's problem, not a size one.
+        #expect(UpdateLimits.isAcceptable(byteCount: 0, expectedContentLength: 0, limit: limit))
+    }
+}

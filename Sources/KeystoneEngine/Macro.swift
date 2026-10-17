@@ -198,6 +198,72 @@ public struct MacroTable: Sendable, Equatable {
     }
 }
 
+// MARK: - Trigger validation
+
+/// Why a macro trigger can never fire. The engine only matches a trigger
+/// against the RAW keys it accumulated for one word, so a trigger containing
+/// anything the engine never accumulates is silently dead.
+public enum MacroTriggerProblem: Equatable, Sendable {
+    case empty
+    case containsWhitespace
+    /// A letter that is not ASCII a-z / A-Z (e.g. "đ", "á", "ư"): those are
+    /// composed outputs, never raw keys.
+    case nonRawLetter(Character)
+    /// Not a word character for the input method, so typing it ends the word
+    /// before the trigger is complete.
+    case boundaryCharacter(Character)
+
+    /// Short Vietnamese explanation, shown inline under the trigger field.
+    public var message: String {
+        switch self {
+        case .empty:
+            return "Gõ tắt đang trống."
+        case .containsWhitespace:
+            return "Gõ tắt không được chứa khoảng trắng: khoảng trắng kết thúc từ nên gõ tắt sẽ không bao giờ khớp."
+        case .nonRawLetter(let ch):
+            return "Ký tự \"\(ch)\" không phải phím gõ thô nên gõ tắt sẽ không bao giờ khớp. Hãy nhập đúng các phím bạn gõ (ví dụ \"ddc\" thay cho \"đc\")."
+        case .boundaryCharacter(let ch):
+            return "Ký tự \"\(ch)\" kết thúc từ ở kiểu gõ hiện tại nên gõ tắt sẽ không khớp khi bật tiếng Việt (chỉ có thể khớp khi tắt tiếng Việt)."
+        }
+    }
+}
+
+extension MacroTable {
+    /// The first reason `trigger` can never fire, or nil when it can.
+    ///
+    /// Duplicates the engine's private `Engine.isWordChar` for Vietnamese
+    /// mode: letters always; VNI adds digits; every other method adds "[" and
+    /// "]". A macro ALWAYS fires in Vietnamese mode and optionally also in
+    /// English mode (which accumulates letters + numbers only), so a
+    /// character must be a Vietnamese-mode word char to be valid. Hence a
+    /// "k2" macro in Telex is reported as `.boundaryCharacter` even with
+    /// `expandInEnglishMode` — it could only fire with Vietnamese off.
+    /// `expandInEnglishMode` is therefore accepted for call-site clarity but
+    /// does not widen the valid set. The behavioural cross-check in
+    /// MacroTriggerValidationTests pins this copy to the real engine.
+    public static func triggerProblem(
+        _ trigger: String,
+        inputMethod: InputMethod,
+        expandInEnglishMode: Bool
+    ) -> MacroTriggerProblem? {
+        guard !trigger.isEmpty else { return .empty }
+        for ch in trigger {
+            if ch.isWhitespace { return .containsWhitespace }
+            if ch.isLetter {
+                if !ch.isASCII { return .nonRawLetter(ch) }
+                continue
+            }
+            let isVietnameseWordChar: Bool
+            switch inputMethod {
+            case .vni: isVietnameseWordChar = ch.isNumber
+            default:   isVietnameseWordChar = ch == "[" || ch == "]"
+            }
+            if !isVietnameseWordChar { return .boundaryCharacter(ch) }
+        }
+        return nil
+    }
+}
+
 /// Text formats a macro file can be in (JSON is handled by the app layer).
 public enum MacroTextFormat: Equatable, Sendable {
     /// OpenKey's own export: `;Compatible OpenKey ...` header, then `name:content` lines.

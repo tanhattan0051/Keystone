@@ -164,6 +164,25 @@ public enum UpdateCheck {
     }
 }
 
+/// Upper bounds for what the updater will accept from the network, so a
+/// hostile or broken server cannot make the app swallow unbounded data
+/// before the signature gate even runs.
+public enum UpdateLimits {
+    public static let maxZipBytes = 64 * 1024 * 1024
+    public static let maxSignatureBytes = 1024
+
+    /// `expectedContentLength` is the server's claim (`nil` or negative =
+    /// unknown, as `URLResponse` reports -1); `byteCount` is what actually
+    /// arrived. Both are checked because the header can lie.
+    public static func isAcceptable(byteCount: Int64, expectedContentLength: Int64?, limit: Int) -> Bool {
+        let limit = Int64(limit)
+        if let expected = expectedContentLength, expected >= 0, expected > limit {
+            return false
+        }
+        return byteCount <= limit
+    }
+}
+
 /// Outcome of inspecting the `Info.plist` of an extracted update bundle.
 public enum StagedBundleCheck: Equatable, Sendable {
     case ok

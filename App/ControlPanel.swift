@@ -74,7 +74,12 @@ private struct BasicPane: View {
         Form {
             Section("Kiểu gõ & bảng mã") {
                 Picker("Kiểu gõ:", selection: $model.inputMethod) {
-                    ForEach(InputMethod.allCases) { Text($0.displayName).tag($0) }
+                    ForEach(InputMethod.allCases) { Text($0.pickerLabel).tag($0) }
+                }
+                if model.inputMethod.behavesAsTelex {
+                    Text("Simple Telex chưa có luật riêng, hiện gõ giống hệt Telex.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 Picker("Bảng mã:", selection: $model.codeTable) {
                     ForEach(CodeTable.allCases) { Text($0.displayName).tag($0) }
