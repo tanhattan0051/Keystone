@@ -12,10 +12,13 @@
 // word and leave what precedes the caret alone, so the sentence position
 // survives them. The arrows, Home, End, PageUp and PageDown are
 // `.commitCaretMove`: they land the caret somewhere the engine has never
-// seen, so they also make it forget the sentence position.
+// seen, so they also make it forget the sentence position. Cmd/Ctrl/Option
+// chords are `.commitChord`, which the controller treats the same way.
+// Function keys and other non-printable keys are `.passthrough`; the
+// controller also finalizes the word on those, since they can move focus.
 public enum KeyTranslator {
     public static func decide(_ k: RawKey) -> KeyDecision {
-        if k.command || k.control || k.option { return .resetPassthrough }
+        if k.command || k.control || k.option { return .commitChord }
         switch k.keyCode {
         case 51: return .backspace
         case 36, 76: return .commitNewline

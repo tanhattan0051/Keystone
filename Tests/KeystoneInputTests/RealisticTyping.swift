@@ -31,7 +31,7 @@ let BACKSPACE = RawKey(keyCode: 51, chars: "")
 ///
 /// `.character`'s physical passthrough appends the typed letter; `.backspace`'s
 /// removes one character (an ordinary, unsuppressed Delete key). The other
-/// decisions (`.commitPassthrough`/`.commitNewline`/`.resetPassthrough`/
+/// decisions (`.commitPassthrough`/`.commitNewline`/`.commitChord`/
 /// `.passthrough`) carry no text worth modeling on this simulated screen —
 /// Return's physical key is "\r", which these tests compare against
 /// plain committed words with no newline, so it is deliberately not appended.

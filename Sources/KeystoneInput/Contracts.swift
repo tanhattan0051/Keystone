@@ -52,8 +52,11 @@ public enum KeyDecision: Equatable, Sendable {
     /// Return / KeypadEnter: finalize the current word, let the key pass
     /// through, AND start a new sentence (for autoCapitalize).
     case commitNewline
-    /// A modifier-chorded key: drop the in-progress word and pass through.
-    case resetPassthrough
+    /// A Cmd/Ctrl/Option-chorded key. The chord may move the caret, paste,
+    /// undo or switch apps, so the engine finalizes the in-progress word
+    /// exactly like a caret move (commit + forget sentence position) and the
+    /// chord passes through.
+    case commitChord
     /// Anything else: pass through, engine untouched.
     case passthrough
 }

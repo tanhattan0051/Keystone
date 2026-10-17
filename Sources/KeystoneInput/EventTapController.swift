@@ -119,7 +119,8 @@ public final class EventTapController: @unchecked Sendable {
             (1 << CGEventType.keyDown.rawValue) |
             (1 << CGEventType.flagsChanged.rawValue) |
             (1 << CGEventType.leftMouseDown.rawValue) |
-            (1 << CGEventType.rightMouseDown.rawValue)
+            (1 << CGEventType.rightMouseDown.rawValue) |
+            (1 << CGEventType.otherMouseDown.rawValue)
         let refcon = Unmanaged.passUnretained(self).toOpaque()
         guard let port = CGEvent.tapCreate(
             tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
@@ -168,8 +169,13 @@ public final class EventTapController: @unchecked Sendable {
         if event.getIntegerValueField(.eventSourceUserData) == Self.selfTag {
             return Unmanaged.passUnretained(event)   // our own synthetic event
         }
-        if type == .leftMouseDown || type == .rightMouseDown {
-            engine.resetBuffer()
+        if type == .leftMouseDown || type == .rightMouseDown || type == .otherMouseDown {
+            // The edit is posted BEFORE the click passes through: our
+            // synthetic events reach the focused app ahead of the click, so
+            // they still land at the old caret, where the word is.
+            if let edit = engine.handleMouseDown() {
+                post(edit, decision: .commitCaretMove, proxy: proxy)
+            }
             return Unmanaged.passUnretained(event)
         }
         if type == .flagsChanged { return Unmanaged.passUnretained(event) }
@@ -192,22 +198,25 @@ public final class EventTapController: @unchecked Sendable {
         // recoverable by the user; a silently eaten keystroke is not.
         let raw = makeRawKey(event)
         let (suppress, edit, decision) = engine.handle(raw)
-        if let edit {
-            // One cheap lock acquire per edit (not per raw keystroke that
-            // passes through untouched) — acceptable on the hot path, same
-            // cost class as EngineController's config lock.
-            let b = behaviorLock.withLock { behavior }
-            let sink = TapSink(source: synthSource, proxy: proxy,
-                               backspaceDown: backspaceDown, backspaceUp: backspaceUp,
-                               textOnKeyDownOnly: b.textOnKeyDownOnly)
-            KeystrokeExecutor(sink: sink).execute(
-                edit,
-                eachGrapheme: b.sendEachKeystroke,
-                clearInlineSuggestion: InlineSuggestionFix.appliesToEdit(
-                    enabledForApp: b.clearsInlineSuggestion, decision: decision, edit: edit)
-            )
-        }
+        if let edit { post(edit, decision: decision, proxy: proxy) }
         return suppress ? nil : Unmanaged.passUnretained(event)
+    }
+
+    /// Realizes an engine edit as synthetic events (key path and mouse path).
+    private func post(_ edit: EngineResult, decision: KeyDecision, proxy: CGEventTapProxy) {
+        // One cheap lock acquire per edit (not per raw keystroke that
+        // passes through untouched) — acceptable on the hot path, same
+        // cost class as EngineController's config lock.
+        let b = behaviorLock.withLock { behavior }
+        let sink = TapSink(source: synthSource, proxy: proxy,
+                           backspaceDown: backspaceDown, backspaceUp: backspaceUp,
+                           textOnKeyDownOnly: b.textOnKeyDownOnly)
+        KeystrokeExecutor(sink: sink).execute(
+            edit,
+            eachGrapheme: b.sendEachKeystroke,
+            clearInlineSuggestion: InlineSuggestionFix.appliesToEdit(
+                enabledForApp: b.clearsInlineSuggestion, decision: decision, edit: edit)
+        )
     }
 
     private func makeRawKey(_ event: CGEvent) -> RawKey {

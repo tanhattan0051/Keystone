@@ -25,7 +25,7 @@ struct InlineSuggestionFixTests {
 
     private static let allDecisions: [KeyDecision] = [
         .character("a"), .backspace, .commitPassthrough, .commitCaretMove,
-        .commitNewline, .resetPassthrough, .passthrough,
+        .commitNewline, .commitChord, .passthrough,
     ]
 
     private static let pureDeletion = EngineResult(backspaceCount: 1, text: "")

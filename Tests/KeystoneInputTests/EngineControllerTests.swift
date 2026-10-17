@@ -46,13 +46,13 @@ struct EngineControllerTests {
         #expect(edit == nil)
     }
 
-    @Test func cmdKeyResetsBuffer() {
+    @Test func cmdKeyCommitsChordAndPassesThrough() {
         let c = EngineController(config: EngineConfig())
         for ch in "vie" {
             _ = c.handle(letter(ch))
         }
         let (suppress, edit, decision) = c.handle(RawKey(keyCode: 0, command: true, chars: "a"))
-        #expect(decision == .resetPassthrough)
+        #expect(decision == .commitChord)
         #expect(suppress == false)
         #expect(edit == nil)
     }

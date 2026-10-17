@@ -147,10 +147,15 @@ public final class Engine {
         return r
     }
 
+    /// Drops the composing word WITHOUT finalizing it: whatever the last render
+    /// showed stays on screen as-is. Only for when the text on screen is not
+    /// ours to rewrite (deactivation, English-mode click). A click or a
+    /// Cmd/Ctrl/Option chord while active uses `flushCaretMove()` instead, so
+    /// the word is committed properly (see `EngineController.handle`).
     public func reset() {
         rawKeys = []; prevUnits = []
-        // `.afterReset`, NOT `.sentenceStart`: a reset fires on a mouse
-        // click / app switch / Cmd-Ctrl-Option chord / deactivation, none of
+        // `.afterReset`, NOT `.sentenceStart`: a reset fires on
+        // deactivation or an English-mode click, neither of
         // which tell the engine it's actually at a sentence start — so the
         // next word must NOT auto-capitalize just because the buffer was
         // cleared. But it's also NOT plain `.midSentence`: the engine has no
@@ -226,12 +231,14 @@ public final class Engine {
         return r
     }
 
+    /// English-mode Cmd/Ctrl/Option chord: drop the macro buffer without
+    /// matching it (the chord may paste or move the caret).
     public func resetInactive() {
         englishRawKeys = []
         // Same reasoning as `reset()`, including the `.afterReset` (not
-        // `.midSentence`) choice: the only caller is a Cmd/Ctrl/Option chord
+        // `.midSentence`) choice: the caller is a Cmd/Ctrl/Option chord
         // in English mode (Cmd+V, Option+←, ...) — `EngineController.handle`'s
-        // `.resetPassthrough` case while `!active` — which tells the engine
+        // `.commitChord` case while `!active` — which tells the engine
         // nothing about being at a sentence start, so neither a pending
         // terminator nor a sentence start may survive it — but also nothing
         // about what text (if any) already sits before the caret, so a

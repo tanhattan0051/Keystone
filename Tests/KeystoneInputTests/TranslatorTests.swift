@@ -68,17 +68,23 @@ struct TranslatorTests {
         #expect(KeyTranslator.decide(RawKey(keyCode: 117, chars: "")) == .commitPassthrough)
     }
 
-    @Test func caretMoveWithAModifierIsStillAReset() {
+    @Test func caretMoveWithAModifierIsAChord() {
         // Option+Left (word jump) is a chord: the modifier check comes first.
-        #expect(KeyTranslator.decide(RawKey(keyCode: 123, option: true, chars: "")) == .resetPassthrough)
+        #expect(KeyTranslator.decide(RawKey(keyCode: 123, option: true, chars: "")) == .commitChord)
     }
 
-    @Test func cmdAIsAShortcut() {
-        #expect(KeyTranslator.decide(RawKey(keyCode: 0, command: true, chars: "a")) == .resetPassthrough)
+    @Test func cmdAIsAChord() {
+        #expect(KeyTranslator.decide(RawKey(keyCode: 0, command: true, chars: "a")) == .commitChord)
+    }
+
+    @Test func functionKeyIsPassthrough() {
+        // F1 arrives as keyCode 122 with a private-use char; the controller
+        // (not the translator) is what commits the word on it.
+        #expect(KeyTranslator.decide(RawKey(keyCode: 122, chars: "\u{F704}")) == .passthrough)
     }
 
     @Test func ctrlKey() {
-        #expect(KeyTranslator.decide(RawKey(keyCode: 0, control: true, chars: "c")) == .resetPassthrough)
+        #expect(KeyTranslator.decide(RawKey(keyCode: 0, control: true, chars: "c")) == .commitChord)
     }
 
     @Test func emptyCharsNonSpecial() {
