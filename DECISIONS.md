@@ -2885,12 +2885,19 @@ code tables and the Converter.
    `e U+0323 U+0302` and ợ is `o U+031B U+0323`. The output now equals
    `decomposedStringWithCanonicalMapping` of the NFC form for all 144 vowel
    combinations (test `compoundTableEqualsNFDOfNFCForEveryVowel`).
+   *Live-typing impact:* this also changes compound live typing of ậ ặ ệ ộ. Typing the
+   dot-below tone after the circumflex/breve now needs a mark-level Backspace (`vieetj`:
+   backspace 2 + [U+0323, U+0302, t], was backspace 1 + [U+0323, t]). Where an app deletes
+   a whole grapheme per Backspace this would erase `ê`; it depends on the grapheme-aware
+   diff (session "sửa nhóm lỗi tiếng Anh", item B). Do not merge before item B lands, or
+   verify that macOS apps delete one combining mark per Backspace.
 3. **Case transforms.** "Hoa đầu câu" uppercases the first letter of the text and of
    each sentence (after `. ! ? …` or a line break, skipping spaces, quotes and
    opening brackets) and leaves every other letter alone. "Hoa Sau Mỗi Từ" uppercases
    only the first letter of each word (`iPhone` and `HTML` keep their tails;
-   `don't` -> `Don't`). Known edge: `e.g.` or `3.5` style text is a sentence start
-   after the dot only if a letter follows.
+   `don't` -> `Don't`). A terminator starts a sentence only when
+   whitespace (or a line break) follows it, so URLs, emails, file names and `v.v.`
+   (`vietnix.vn`, `file.txt`) are not capitalized inside the token.
 4. **CRLF is preserved.** `Character("\r\n").asciiValue` is 0x0A, which turned CRLF
    into LF. `asciiUnits(_:)` in OutputTable.swift emits one unit per ASCII scalar and
    is used by the Converter and by every table's `plain`.
@@ -2910,3 +2917,7 @@ code tables and the Converter.
    cp1258, with expected bytes derived by hand from the table headers. Note
    `vieetj`+Backspace alone ends as `vieet`, not `viêt`: `viêt` is not a valid syllable
    so restore-if-invalid reverts it at flush, which is the engine working as designed.
+
+8. **cp1258 -> Unicode no longer traps on emoji.** The pseudo-byte decoder used
+   `UInt16(scalar.value)`, which crashes above U+FFFF; it now uses `UInt16(exactly:)`
+   and copies such scalars unchanged.

@@ -105,24 +105,41 @@ public enum Converter {
         return out
     }
 
-    /// Uppercase the first letter of the text and of every sentence (after
-    /// . ! ? … or a line break), skipping spaces, quotes and opening
-    /// brackets in between. Nothing else changes.
+    /// Uppercase the first letter of the text and of every sentence. A
+    /// sentence starts after . ! ? … only when whitespace follows (closing
+    /// quotes/brackets may sit in between), or after a line break, so
+    /// vietnix.vn, tan@vietnix.vn, file.txt and v.v. are left alone. Nothing
+    /// else changes.
     private static func capitalizeSentences(_ text: String) -> String {
-        let skipped: Set<Character> = ["\"", "'", "\u{201C}", "\u{2018}", "\u{00AB}", "(", "[", "{"]
+        let opening: Set<Character> = ["\"", "'", "\u{201C}", "\u{2018}", "\u{00AB}", "(", "[", "{"]
+        let closing: Set<Character> = ["\"", "'", "\u{201D}", "\u{2019}", "\u{00BB}", ")", "]", "}"]
         var out = ""
-        var atStart = true
+        var atStart = true            // the next letter opens a sentence
+        var afterTerminator = false   // saw . ! ? … ; a sentence starts only if whitespace follows
         for ch in text {
             if atStart && ch.isLetter {
                 out += ch.uppercased()
                 atStart = false
+                afterTerminator = false
+                continue
+            }
+            out.append(ch)
+            if ch.isNewline {
+                atStart = true
+                afterTerminator = false
+            } else if ch == "." || ch == "!" || ch == "?" || ch == "\u{2026}" {
+                afterTerminator = true
+                atStart = false
+            } else if ch.isWhitespace {
+                if afterTerminator { atStart = true }
+                afterTerminator = false
+            } else if afterTerminator && closing.contains(ch) {
+                continue   // b?" -> still waiting for the whitespace
+            } else if atStart && opening.contains(ch) {
+                continue
             } else {
-                out.append(ch)
-                if ch == "." || ch == "!" || ch == "?" || ch == "\u{2026}" || ch.isNewline {
-                    atStart = true
-                } else if atStart && !(ch.isWhitespace || skipped.contains(ch)) {
-                    atStart = false   // digit, symbol or closing quote: not a sentence start
-                }
+                atStart = false   // digit, symbol or token continuation: not a sentence start
+                afterTerminator = false
             }
         }
         return out
@@ -235,13 +252,20 @@ public enum Converter {
         var out = ""
         var i = 0
         while i < scalars.count {
-            let b = UInt16(scalars[i].value)
+            // Scalars above U+FFFF (emoji) are never cp1258 bytes: copy as-is.
+            guard let b = UInt16(exactly: scalars[i].value) else {
+                out.unicodeScalars.append(scalars[i])
+                i += 1
+                continue
+            }
             if b == 0xF0 { out.append("đ"); i += 1; continue }
             if b == 0xD0 { out.append("Đ"); i += 1; continue }
             if let (base, mark, upper) = qualityBytes[b] {
                 var tone: Tone = .ngang
                 var consumed = 1
-                if i + 1 < scalars.count, let t = toneBytes[UInt16(scalars[i + 1].value)] {
+                if i + 1 < scalars.count,
+                   let next = UInt16(exactly: scalars[i + 1].value),
+                   let t = toneBytes[next] {
                     tone = t
                     consumed = 2
                 }

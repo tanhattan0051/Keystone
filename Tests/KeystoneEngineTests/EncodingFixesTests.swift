@@ -96,7 +96,19 @@ import Testing
 
     @Test func sentenceCaseHandlesTerminatorsQuotesAndNewlines() {
         let r = Converter.convert("a! \"b?\" (c)\nd.e\r\nf", from: .unicode, to: .unicode, caseTransform: .sentence)
-        #expect(r == "A! \"B?\" (C)\nD.E\r\nF")
+        #expect(r == "A! \"B?\" (C)\nD.e\r\nF")
+    }
+
+    @Test func sentenceCaseLeavesUrlsEmailsAndFileNamesAlone() {
+        func sc(_ t: String) -> String { Converter.convert(t, from: .unicode, to: .unicode, caseTransform: .sentence) }
+        #expect(sc("xem vietnix.vn hoặc file.txt. ok") == "Xem vietnix.vn hoặc file.txt. Ok")
+        #expect(sc("tan@vietnix.vn") == "Tan@vietnix.vn")
+        #expect(sc("v.v. xong") == "V.v. Xong")
+    }
+
+    @Test func cp1258DecodeDoesNotTrapOnEmoji() {
+        #expect(Converter.convert("ok 😀", from: .cp1258, to: .unicode) == "ok 😀")
+        #expect(Converter.convert("😀a", from: .cp1258, to: .unicode) == "😀a")
     }
 
     @Test func sentenceCaseDoesNotLowercase() {
