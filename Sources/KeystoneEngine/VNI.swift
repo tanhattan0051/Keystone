@@ -82,7 +82,7 @@ enum VNI {
                 let adjacent = vi == SyllableOps.lastVowelIndex(cells)
                 cells[vi].mark = .circumflex
                 if SyllableOps.marksLegal(cells),
-                   adjacent || (allowFreeToneMark && Phonology.isNucleusPrefix(SyllableOps.vowelLetters(cells))) {
+                   adjacent || (allowFreeToneMark && Phonology.isNucleusPrefix(SyllableOps.foldedNucleusLetters(cells))) {
                     return .mark(key: "6", targets: [vi])
                 }
                 cells[vi].mark = .none
@@ -103,20 +103,29 @@ enum VNI {
             if let vi = SyllableOps.lastVowelIndex(cells), cells[vi].mark == .none,
                (cells[vi].base == .o || cells[vi].base == .u) {
                 cells[vi].mark = .horn
-                if SyllableOps.marksLegal(cells) { return .mark(key: "7", targets: [vi]) }
+                // The nucleus must stay a legal prefix: luu7 must not take "uư" here
+                // but fall through to the backward search (→ lưu).
+                if SyllableOps.marksLegal(cells),
+                   Phonology.isNucleusPrefix(SyllableOps.foldedNucleusLetters(cells)) {
+                    return .mark(key: "7", targets: [vi])
+                }
                 cells[vi].mark = .none
             }
             // Last vowel is an offglide with no target of its own — search
             // backward for an earlier eligible vowel (moi71→mới, gui73→gửi).
             // Non-adjacent by construction, so gated by allowFreeToneMark.
-            if allowFreeToneMark, let hi = cells.lastIndex(where: {
-                $0.isVowel && $0.mark == .none && ($0.base == .o || $0.base == .u)
-            }) {
-                let isQuGlide = hi > 0 && !cells[hi - 1].isVowel && cells[hi - 1].consonant == "q"
-                if !isQuGlide {
+            // Try EVERY eligible o/u from the end (like Telex's w loop), not just
+            // the last one: in "luu" the last u was already rejected above, and
+            // the earlier u (luu7→lưu) is the one that fits. The nucleus check
+            // is glide-folded so gi's i does not poison it (giua74→giữa).
+            if allowFreeToneMark {
+                for hi in cells.indices.reversed() where cells[hi].isVowel && cells[hi].mark == .none
+                    && (cells[hi].base == .o || cells[hi].base == .u) {
+                    let isQuGlide = hi > 0 && !cells[hi - 1].isVowel && cells[hi - 1].consonant == "q"
+                    if isQuGlide { continue }
                     cells[hi].mark = .horn
                     if SyllableOps.marksLegal(cells),
-                       Phonology.isNucleusPrefix(SyllableOps.vowelLetters(cells)) {
+                       Phonology.isNucleusPrefix(SyllableOps.foldedNucleusLetters(cells)) {
                         return .mark(key: "7", targets: [hi])
                     }
                     cells[hi].mark = .none
@@ -141,7 +150,7 @@ enum VNI {
             if allowFreeToneMark, let ai = cells.lastIndex(where: { $0.isVowel && $0.mark == .none && $0.base == .a }) {
                 cells[ai].mark = .breve
                 if SyllableOps.marksLegal(cells),
-                   Phonology.isNucleusPrefix(SyllableOps.vowelLetters(cells)) {
+                   Phonology.isNucleusPrefix(SyllableOps.foldedNucleusLetters(cells)) {
                     return .mark(key: "8", targets: [ai])
                 }
                 cells[ai].mark = .none
