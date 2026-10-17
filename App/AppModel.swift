@@ -1141,6 +1141,13 @@ final class AppModel {
             Self.log.info("switch key ignored: Secure Input is on")
             return
         }
+        // The recorder suspended the engine; toggling `enabled` here would run
+        // `enabled.didSet` -> `setActive(enabled)` and turn it back on
+        // mid-recording, so the next key is re-synthesized as keyCode 0.
+        guard !isRecordingSwitchKey else {
+            Self.log.info("switch key ignored: the switch-key recorder is armed")
+            return
+        }
         // The activation notification can arrive AFTER a quick ⌘Tab + switch
         // key, leaving `currentBundleID` on the app we just left: the toggle
         // would be learned for the wrong app, and the late notification would
@@ -1157,6 +1164,9 @@ final class AppModel {
         if switchKeyBeep { NSSound.beep() }
     }
 
+    /// True between begin/endSwitchKeyRecording; see toggleVietnameseFromHotKey.
+    private var isRecordingSwitchKey = false
+
     /// Suspends the tap's Vietnamese engine WITHOUT touching `enabled` (the
     /// persisted, user-facing toggle) — call while the "Phím kèm:" recorder
     /// in the Control Panel is armed. With the engine active, a plain
@@ -1170,6 +1180,7 @@ final class AppModel {
     /// recorder always sees the real keyCode/characters. See DECISIONS.md
     /// "Phím chuyển".
     func beginSwitchKeyRecording() {
+        isRecordingSwitchKey = true
         controller.setActive(false)
     }
 
@@ -1177,6 +1188,7 @@ final class AppModel {
     /// unconditionally `true`) once the recorder has captured a key or been
     /// cancelled — pairs with `beginSwitchKeyRecording()`.
     func endSwitchKeyRecording() {
+        isRecordingSwitchKey = false
         controller.setActive(enabled)
     }
 

@@ -26,11 +26,33 @@ struct RulesToAddEnabledDuplicateTests {
         #expect(out.skippedDuplicates == 1)
     }
 
-    @Test func firstEnabledWinsOverLaterEnabled() {
+    @Test func lastEnabledWinsOverEarlierEnabled() {
         let out = MacroTable.rulesToAdd(
             [rule("a", "1", enabled: false), rule("a", "2"), rule("a", "3")], existingTriggers: [])
-        #expect(pairs(out.toAdd) == ["a=2"])
+        #expect(pairs(out.toAdd) == ["a=3"])
         #expect(out.skippedDuplicates == 2)
+    }
+
+    @Test func laterDisabledDoesNotReplaceKeptEnabled() {
+        let out = MacroTable.rulesToAdd([rule("a", "1"), rule("a", "2", enabled: false)], existingTriggers: [])
+        #expect(pairs(out.toAdd) == ["a=1"])
+        #expect(out.toAdd[0].enabled)
+    }
+
+    /// Re-importing an export must keep firing what fired before.
+    @Test func reimportFiresSameRuleAsOriginalTable() {
+        let patterns: [[MacroRule]] = [
+            [rule("vt", "Việt Nam"), rule("vt", "vợ tôi")],
+            [rule("vt", "off", enabled: false), rule("vt", "on")],
+            [rule("vt", "on"), rule("vt", "off", enabled: false)],
+            [rule("vt", "a", enabled: false), rule("vt", "b", enabled: false)],
+        ]
+        for list in patterns {
+            let original = MacroTable(list).match("vt", englishMode: false)
+            let reimported = MacroTable(MacroTable.rulesToAdd(list, existingTriggers: []).toAdd)
+                .match("vt", englishMode: false)
+            #expect(original?.replacement == reimported?.replacement)
+        }
     }
 
     @Test func allDisabledKeepsFirst() {
@@ -65,6 +87,12 @@ struct ImportDispatchTests {
         #expect(MacroTable.looksLikeJSON([0xFF, 0xFE, 0x5B, 0x00]))  // UTF-16LE "["
         #expect(!MacroTable.looksLikeJSON(bytes("vn:Việt Nam")))
         #expect(!MacroTable.looksLikeJSON(bytes(openKeyHeader)))
+        #expect(MacroTable.looksLikeJSON(bytes("[]")))
+        #expect(MacroTable.looksLikeJSON(bytes("[")))
+        #expect(MacroTable.looksLikeJSON(bytes("{ \"macros\": [] }")))
+        #expect(!MacroTable.looksLikeJSON(bytes("[c]\t©")))
+        #expect(!MacroTable.looksLikeJSON(bytes("{tm}\t™")))
+        #expect(!MacroTable.looksLikeJSON(bytes("{:}:ký tự")))
         #expect(!MacroTable.looksLikeJSON(bytes("")))
         #expect(!MacroTable.looksLikeJSON(bytes("   \n")))
     }
@@ -90,6 +118,14 @@ struct ImportDispatchTests {
     @Test func realOpenKeyFileStillParses() throws {
         let text = "\(openKeyHeader)\nvn:Việt Nam\nko:không\n"
         #expect(pairs(try importRules(text)) == ["vn=Việt Nam", "ko=không"])
+    }
+
+    @Test func bracketLeadingTabFileIsTextNotJSON() throws {
+        #expect(pairs(try importRules("[c]\t©\n{tm}\t™\n")) == ["[c]=©", "{tm}=™"])
+    }
+
+    @Test func headerlessOpenKeyStartingWithBraceIsText() throws {
+        #expect(pairs(try importRules("{:}:ký tự\nvn:Việt Nam\n")).contains("vn=Việt Nam"))
     }
 
     @Test func tabSeparatedFileStillParses() throws {

@@ -178,11 +178,13 @@ public struct MacroTable: Sendable, Equatable {
 
     /// Which of `incoming` to append to a list that already has
     /// `existingTriggers` (OpenKey's append mode: an existing name is kept).
-    /// Within the incoming list a repeated trigger keeps its FIRST ENABLED
+    /// Within the incoming list a repeated trigger keeps its LAST ENABLED
     /// occurrence, placed at the first occurrence's position (if none is
-    /// enabled, the first one): `MacroTable.init` fires the last enabled rule
-    /// for a trigger, so keeping a disabled first duplicate would silently
-    /// turn off an export/re-import of "disabled vn, then enabled vn".
+    /// enabled, the first one). This mirrors `MacroTable.init`, which fires
+    /// the last enabled rule for a trigger: the rule that fires before an
+    /// export must be the one that survives a re-import (keeping a disabled
+    /// first duplicate would turn the macro off; keeping the first enabled
+    /// one would swap its expansion).
     /// Empty triggers are dropped silently and are NOT counted as duplicates.
     /// Order and flags preserved; `skippedDuplicates` counts every dropped repeat.
     public static func rulesToAdd(
@@ -196,7 +198,7 @@ public struct MacroTable: Sendable, Equatable {
             if existingTriggers.contains(rule.trigger) {
                 skipped += 1
             } else if let position = positionByTrigger[rule.trigger] {
-                if !toAdd[position].enabled && rule.enabled { toAdd[position] = rule }
+                if rule.enabled { toAdd[position] = rule }
                 skipped += 1
             } else {
                 positionByTrigger[rule.trigger] = toAdd.count
@@ -216,11 +218,15 @@ public struct MacroTable: Sendable, Equatable {
         rules.filter { !$0.trigger.isEmpty }
     }
 
-    /// True when the first non-whitespace character (after an optional BOM)
-    /// is `[` or `{`. Such a file is JSON: if it fails to decode, the JSON
+    /// True when the file is shaped like our JSON export (an array of
+    /// objects), after an optional BOM: `[` followed by optional whitespace
+    /// then `{`, `]` or end of data, or `{` followed by optional whitespace
+    /// then `"` or `}`. Such a file is JSON: if it fails to decode, the JSON
     /// error must be reported rather than text-parsing the broken JSON, which
-    /// would import lines like `    "trigger": ...` as macros. Also sees
-    /// through a UTF-16 BOM (the NUL bytes are skipped).
+    /// would import lines like `    "trigger": ...` as macros. A bare `[` or
+    /// `{` is NOT enough: legacy text files can start with a trigger like
+    /// `[c]<TAB>©` or `{tm}<TAB>™`, or OpenKey's `{:}`. Also sees through a
+    /// UTF-16 BOM (the NUL bytes are skipped).
     public static func looksLikeJSON(_ bytes: [UInt8]) -> Bool {
         var content = bytes[...]
         if content.starts(with: [0xEF, 0xBB, 0xBF]) {
@@ -229,8 +235,22 @@ public struct MacroTable: Sendable, Equatable {
             content = content.dropFirst(2)
         }
         let whitespace: Set<UInt8> = [0x20, 0x09, 0x0A, 0x0D, 0x00]
-        guard let first = content.first(where: { !whitespace.contains($0) }) else { return false }
-        return first == UInt8(ascii: "[") || first == UInt8(ascii: "{")
+        func nextSignificant(_ data: ArraySlice<UInt8>) -> UInt8? {
+            data.first(where: { !whitespace.contains($0) })
+        }
+        guard let first = nextSignificant(content) else { return false }
+        let afterFirst = content.drop(while: { $0 != first }).dropFirst()
+        let next = nextSignificant(afterFirst)
+        switch first {
+        case UInt8(ascii: "["):
+            guard let next else { return true }  // truncated "[": still our JSON
+            return next == UInt8(ascii: "{") || next == UInt8(ascii: "]")
+        case UInt8(ascii: "{"):
+            guard let next else { return false }
+            return next == UInt8(ascii: "\"") || next == UInt8(ascii: "}")
+        default:
+            return false
+        }
     }
 
     /// Turn a macro file's bytes into usable rules. The JSON decode and the

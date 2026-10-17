@@ -124,9 +124,9 @@ struct RulesToAddTests {
         #expect(out.skippedDuplicates == 1)
     }
 
-    @Test func withinFileDuplicateFirstWins() {
+    @Test func withinFileDuplicateLastEnabledWins() {
         let out = MacroTable.rulesToAdd([rule("a", "1"), rule("a", "2")], existingTriggers: [])
-        #expect(pairs(out.toAdd) == ["a=1"])
+        #expect(pairs(out.toAdd) == ["a=2"])
         #expect(out.skippedDuplicates == 1)
     }
 

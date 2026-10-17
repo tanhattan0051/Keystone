@@ -59,10 +59,12 @@ enum MacroImportMode { case merge, replace }
 enum MacroImportError: LocalizedError {
     case noMacrosFound
     case unreadableText
+    case malformedJSON(String)
     var errorDescription: String? {
         switch self {
         case .noMacrosFound: return "Không tìm thấy gõ tắt nào trong tệp này."
         case .unreadableText: return "Không đọc được tệp này dưới dạng văn bản (UTF-8 hoặc UTF-16)."
+        case .malformedJSON(let detail): return "Tệp JSON bị lỗi định dạng: \(detail)"
         }
     }
 }
@@ -201,6 +203,10 @@ final class MacroStore {
             throw MacroImportError.noMacrosFound
         } catch MacroImportFailure.unreadableText {
             throw MacroImportError.unreadableText
+        } catch let error as DecodingError {
+            // JSON-shaped file that failed to decode: show a Vietnamese message
+            // instead of Foundation's raw English DecodingError text.
+            throw MacroImportError.malformedJSON(error.localizedDescription)
         }
     }
 
