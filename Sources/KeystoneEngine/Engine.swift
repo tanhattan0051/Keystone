@@ -297,11 +297,7 @@ public final class Engine {
         let comp = interpret(rawKeys)
         let table = outputTable(for: config.codeTable)
         let newUnits: [UInt16]
-        if Engine.isBareWRun(rawKeys, inputMethod: config.inputMethod,
-                             literalAfterCancel: config.literalAfterCancel) {
-            // `www`: the fold would eat one w per cancel; see `isBareWRun`.
-            newUnits = rawKeys.flatMap { table.plain($0) }
-        } else if showsComposedAfterCancel(comp) {
+        if showsComposedAfterCancel(comp) {
             // Eager restore would render the raw keys here, but the cancel rule
             // keeps the composed spelling on screen — see `showsComposedAfterCancel`.
             newUnits = encode(comp, table: table)
@@ -376,10 +372,10 @@ public final class Engine {
         // two layers".
         let compHasVowel = comp.cells.contains { $0.isVowel }
         // Collapse the "doubled-w" habit (ww = one literal w) up front: in
-        // Telex `w` is always the ư/horn key, so a run of exactly two w's is
-        // an escape to a single `w` (the fold already collapses a bare "ww" →
-        // "w"); a run of three or more is literal and stays. This makes an English word typed
-        // with doubled w's revert cleanly — "wwin" → "win", "swwim" → "swim" — while words without a
+        // Telex `w` is always the ư/horn key, so a "ww" pair is always an
+        // escape to a single `w` (the fold already collapses a bare "ww" →
+        // "w"). This makes an English word typed with doubled w's revert
+        // cleanly — "wwin" → "win", "swwim" → "swim" — while words without a
         // "ww" pair (boss, wrong) are untouched. Shared by both the
         // force-English and restore-if-invalid branches below, and by
         // `revertToRawUnits`.
@@ -402,11 +398,7 @@ public final class Engine {
             return keys.flatMap { table.plain($0) }
         }
         let finalUnits: [UInt16]
-        if Engine.isBareWRun(rawKeys, inputMethod: config.inputMethod,
-                             literalAfterCancel: config.literalAfterCancel) {
-            // `www`: every w is literal, the fold would eat one per cancel.
-            finalUnits = revertToRawUnits()
-        } else if config.spellCheck, !rawKeys.isEmpty, let fe = forceEnglish,
+        if config.spellCheck, !rawKeys.isEmpty, let fe = forceEnglish,
            rawWord.lowercased() != composedWordU.lowercased(),
            fe.contains(rawWord) {
             // Force-English whitelist (Lớp B): the just-typed word composes a
@@ -475,8 +467,11 @@ public final class Engine {
     ///
     ///   - `ww` → `w`: `w` is always the ư/horn transform, so a doubled `w` is
     ///     the escape for one literal `w` — "wwin"/"swwim" revert to "win"/"swim".
-    ///     Only a run of EXACTLY two: a third `w` already undid the escape, so
-    ///     "www" (the web prefix) is three literal `w`s and stays "www".
+    ///     Pairwise, like OpenKey: after the escape the next `w` is literal
+    ///     (OpenKey's `tempDisableKey`), so w,w,w reads "ww" on screen and at
+    ///     commit, and the web prefix is typed w,w,w,w. Leaving a run of three
+    ///     alone was tried and rejected: the third key then grows the screen
+    ///     from "w" to "www" in one keystroke and breaks w,w,w,w.
     ///   - `ddd` → `dd`: `dd` is the đ transform, so a THIRD `d` undoes the đ and
     ///     leaves two literal `d`s. An English/tech word whose literal starts
     ///     "dd" is therefore typed with a leading "ddd" (its only route, since
@@ -503,33 +498,15 @@ public final class Engine {
                 i += 3
                 continue
             }
-            if isW(ch) {
-                var runEnd = i + 1
-                while runEnd < keys.count, isW(keys[runEnd]) { runEnd += 1 }
-                // Exactly two → one (the horn escape); any other run is literal.
-                let keep = (runEnd - i == 2) ? 1 : runEnd - i
-                out.append(contentsOf: keys[i..<(i + keep)])
-                i = runEnd
+            out.append(ch)
+            // "ww" → keep one w, drop the paired second (the horn escape).
+            if isW(ch), i + 1 < keys.count, isW(keys[i + 1]) {
+                i += 2
                 continue
             }
-            out.append(ch)
             i += 1
         }
         return out
-    }
-
-    /// Is the word nothing but a run of three or more w/W in a Telex-family
-    /// method (`www`)? The `ww` escape is a run of exactly two, so these w's are
-    /// all literal. The fold, however, treats the second w as a cancel and then
-    /// drops that key from the display, so it would show one w too few (`www`
-    /// -> `ww`); `rerender` and `finalize` render the keys as typed instead.
-    /// Mixed words (`wwwin`) are not covered: they have a vowel or other letter
-    /// and go through the ordinary restore, whose collapse leaves the run alone.
-    static func isBareWRun(_ keys: [Character], inputMethod: InputMethod,
-                           literalAfterCancel: Bool) -> Bool {
-        // Only `literalAfterCancel` makes the fold drop the cancelling key; with
-        // it off the fold already shows the run as typed, so leave it alone.
-        literalAfterCancel && inputMethod != .vni && keys.count >= 3 && keys.allSatisfy { $0 == "w" || $0 == "W" }
     }
 
     /// Sentence-start auto-capitalize (Phase 4): uppercases the first cell,
@@ -658,7 +635,16 @@ public final class Engine {
         guard Phonology.isLegalOnset(p.onsetString, firstNucleus: p.firstNucleus) else { return false }
         guard Phonology.isLegalNucleus(p.nucleusString) else { return false }
         guard Phonology.isLegalCoda(p.codaString) else { return false }
-        guard Phonology.isCompleteRime(nucleus: p.nucleusString, coda: p.codaString) else { return false }
+        // A lone vowel letter with no onset, coda or tone is the letter itself
+        // (chữ ă, bảng chữ cái), not an attempted syllable, so the closed-only
+        // rule of `isCompleteRime` does not apply to it: "aw " stays "ă ", while
+        // "aws " and "saw " still restore.
+        let isLoneLetter = p.onsetString.isEmpty && p.codaString.isEmpty
+            && p.nucleusIdx.count == 1 && comp.tone == .ngang
+        let rimeIsComplete = isLoneLetter
+            ? Phonology.isLegalRime(nucleus: p.nucleusString, coda: p.codaString)
+            : Phonology.isCompleteRime(nucleus: p.nucleusString, coda: p.codaString)
+        guard rimeIsComplete else { return false }
         guard Phonology.toneAllowed(comp.tone, coda: p.codaString) else { return false }
         return true
     }

@@ -61,7 +61,7 @@ struct CommitRimeTests {
     @Test func otherNucleiKeepVelarCodas() {
         #expect(Phonology.isCompleteRime(nucleus: "a", coda: "ng"))
         #expect(Phonology.isCompleteRime(nucleus: "e", coda: "c"))
-        #expect(Phonology.isCompleteRime(nucleus: "uy", coda: "c"))
+        #expect(Phonology.isCompleteRime(nucleus: "o", coda: "c"))
     }
 
     @Test func offglideFinalStillRejectedWithCoda() {
@@ -81,6 +81,18 @@ struct CommitRimeTests {
     @Test func englishLookalikesRevertAtCommit() {
         #expect(typeThroughEngine("saw ") == "saw ")
         #expect(typeThroughEngine("disc ") == "disc ")
+    }
+
+    @Test func loneLetterStaysTheLetter() {
+        // Typing just the letter (chữ ă, bảng chữ cái) is not an attempted syllable.
+        #expect(typeThroughEngine("aw ") == "ă ")
+        #expect(typeThroughEngine("aa ") == "â ")
+        #expect(typeThroughEngine("AW ") == "Ă ")
+        // With an onset, a coda or a tone it is a syllable again, and open ă/â is not one.
+        #expect(typeThroughEngine("AWS ") == "AWS ")
+        #expect(typeThroughEngine("aws ") == "aws ")
+        #expect(typeThroughEngine("saw ") == "saw ")
+        #expect(typeThroughEngine("oaw ") == "oaw ")
     }
 
     @Test func vietnameseStillComposes() {

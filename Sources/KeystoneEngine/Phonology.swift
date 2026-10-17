@@ -138,8 +138,9 @@ enum Phonology {
     /// the syllable still being typed (tieeng → "tiê" → tiêng), so
     /// `Engine.isUnrecoverable` (mid-word eager restore) keeps the permissive
     /// `isLegalRime`. At commit nothing more will arrive, so a syllable like
-    /// "să" (saw), "díc" (disc) or "thíng" (things) is a certain English
-    /// lookalike and is rejected here (used only by `Engine.isValid`).
+    /// "să" (saw), "díc" (disc) or "thíng" (things) is certainly not a finished
+    /// Vietnamese word and is rejected here (used only by `Engine.isValid`,
+    /// which exempts a lone toneless vowel letter such as "ă").
     static func isCompleteRime(nucleus: String, coda: String) -> Bool {
         guard isLegalRime(nucleus: nucleus, coda: coda) else { return false }
         if coda.isEmpty { return !closedOnlyNuclei.contains(nucleus) }

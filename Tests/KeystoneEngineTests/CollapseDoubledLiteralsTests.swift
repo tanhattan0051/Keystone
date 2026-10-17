@@ -2,9 +2,9 @@
 // commit decision that keeps a cancelled word's composed spelling when that is
 // what the screen already shows.
 //
-// `ww` -> `w` only for a run of EXACTLY two (so `www` stays `www`), `ddd` -> `dd`
-// as before, and nothing at all in VNI (its escapes are digits, `w`/`d` are
-// plain letters there).
+// Telex: each `ww` pair -> `w` and `ddd` -> `dd`, as before (OpenKey-compatible:
+// `www` is an escaped `w` plus a literal `w`, so `ww`). VNI: nothing at all (its
+// escapes are digits, `w`/`d` are plain letters there).
 
 import Testing
 @testable import KeystoneEngine
@@ -18,7 +18,7 @@ struct CollapseDoubledLiteralsTests {
         String(Engine.collapseDoubledLiterals(Array(s), inputMethod: .vni))
     }
 
-    @Test func exactlyTwoWsCollapseToOne() {
+    @Test func eachWwPairCollapsesToOne() {
         #expect(telex("wwin") == "win")
         #expect(telex("swwim") == "swim")
         #expect(telex("ww") == "w")
@@ -27,11 +27,14 @@ struct CollapseDoubledLiteralsTests {
         #expect(telex("Wwin") == "Win")
         #expect(telex("wWin") == "win")
     }
-    @Test func runsOfOneOrThreeOrMoreWsAreLeftAlone() {
-        #expect(telex("www") == "www")
-        #expect(telex("wwww") == "wwww")
+    @Test func longerRunsCollapsePairwiseLikeOpenKey() {
+        // w,w is the escape for one literal w; the next w is literal (OpenKey's
+        // tempDisableKey), so w,w,w reads "ww" and w,w,w,w reads "www".
+        #expect(telex("www") == "ww")
+        // (The engine never restores a vowel-less run: w,w,w,w shows and commits the
+        // fold's "www"; ShippedCommitMatchesScreenTests pins that end to end.)
+        #expect(telex("wwww") == "ww")
         #expect(telex("wrong") == "wrong")
-        #expect(telex("wwwin") == "wwwin")
     }
     @Test func twoSeparateTwoRunsEachCollapse() {
         #expect(telex("wwawwb") == "wawb")
@@ -46,15 +49,6 @@ struct CollapseDoubledLiteralsTests {
         #expect(vni("dddos") == "dddos")
         #expect(vni("swwim") == "swwim")
         #expect(vni("www") == "www")
-    }
-    @Test func bareWRunNeedsThreeOrMoreAndATelexMethod() {
-        func run(_ s: String, _ m: InputMethod = .telex, lac: Bool = true) -> Bool {
-            Engine.isBareWRun(Array(s), inputMethod: m, literalAfterCancel: lac)
-        }
-        #expect(run("www") && run("wwww") && run("WwW"))
-        #expect(!run("ww") && !run("w") && !run("wwin") && !run("wwwx"))
-        #expect(!run("www", .vni))
-        #expect(!run("www", lac: false))
     }
     @Test func simpleTelexBehavesLikeTelex() {
         #expect(String(Engine.collapseDoubledLiterals(Array("swwim"), inputMethod: .simpleTelex1)) == "swim")

@@ -1,6 +1,6 @@
 // ShippedCommitMatchesScreenTests.swift — through the shipped config, what Space
 // commits must not differ from what the screen showed for a cancelled word whose
-// display came from the cancel rule, and a run of three w's must survive.
+// display came from the cancel rule; VNI keeps every typed w and d.
 
 import Testing
 @testable import KeystoneEngine
@@ -13,9 +13,14 @@ private let vniShipped: EngineConfig = {
 
 @Suite("WwwAndVniCollapse", .enabled(if: systemDictExists, "requires /usr/share/dict/words"))
 struct WwwAndVniCollapseTests {
-    @Test func threeWsStayThree() {
-        #expect(typeShipped("www") == "www ")
-        #expect(screenWhileTyping("www") == "www")
+    /// OpenKey-compatible, deliberately unchanged: w,w is the escape for one
+    /// literal w and the next w is literal, so the web prefix is typed w,w,w,w.
+    /// The screen and the commit agree at every step.
+    @Test func wwwFollowsTheOpenKeyEscape() {
+        #expect(screenWhileTyping("www") == "ww")
+        #expect(typeShipped("www") == "ww ")
+        #expect(screenWhileTyping("wwww") == "www")
+        #expect(typeShipped("wwww") == "www ")
     }
     @Test func twoWsShowOneMidWord() {
         #expect(screenWhileTyping("ww") == "w")
