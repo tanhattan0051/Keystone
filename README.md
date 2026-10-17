@@ -87,13 +87,15 @@ Cùng với **self-tag** chống xử lý lại chính event mình sinh ra, **kh
   OpenKey)"** trong Bảng điều khiển; xem DECISIONS.md "OpenKey-compatible literal-after-cancel".
   Khi từ điển đang bật (xem "Giữ từ tiếng Anh đang hiển thị" ở trên), một từ Telex vừa huỷ dấu còn
   được chọn giữa dạng đã huỷ và dạng gõ thô theo độ giống tiếng Anh, so bằng tiền tố của từ điển:
-  dạng đã huỷ chỉ thắng khi nó là một từ, hoặc còn khớp từ điển dài hơn dạng thô ít nhất 2 chữ cái.
+  dạng đã huỷ thắng khi nó là một từ, khi nó còn khớp từ điển dài hơn dạng thô ít nhất 2 chữ cái,
+  hoặc khi màn hình đang hiện sẵn dạng đã huỷ mà dạng thô không phải một từ (`songss → songs`,
+  `keyss → keys`), để phím cách không đổi chữ đang thấy.
   Nhờ vậy `unssuspend → unsuspend`, `unsspend → unspend`, `susspend → suspend` dù từ đó không có
   trong từ điển. Từ viết lẫn hoa thường (`isString`) hay mất hơn một phím (`boundsError`) giữ nguyên
   như gõ; VNI không bị ảnh hưởng (phím huỷ là chữ số, như `win11`). Đây là heuristic đã đo, không
-  phải bảo đảm: không từ nào trong 6.977 từ tiếng Anh viết thường (man page, tài liệu repo) bị đổi
-  sai, nhưng trên 46,6 triệu từ code và man page vẫn còn cỡ 1 lần mỗi 174.000 từ gõ đúng bị mất một
-  chữ (`insstr` → `instr`, hằng số IN HOA, tên riêng như `Alessandro`). Tắt công tắc "Huỷ dấu xong
+  phải bảo đảm. Trên 3,25 triệu từ của man page và mã nguồn, gõ huỷ dấu theo thói quen ra đúng
+  95,2% số từ (trước đây 89,5%). Đổi lại, vài từ gõ thường vẫn bị mất một chữ: `troff` → `trof`,
+  `errp` → `erp`, hằng số IN HOA, tên riêng như `Renee` hay `Alessandro`. Tắt công tắc "Huỷ dấu xong
   thì gõ tiếp chữ thường" để về hành vi cũ. Xem DECISIONS.md "Cancel keeps the literal:
   English-likeness by dictionary prefixes".
 - **Kiểm tra chính tả** *(mặc định bật):* khi từ đang gõ trở thành một âm tiết tiếng Việt "chết" —

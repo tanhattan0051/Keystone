@@ -6,8 +6,8 @@ import Testing
 @testable import KeystoneEngine
 
 /// Out-of-dictionary words that the songss fix commits as the screen showed,
-/// which is wrong for them. Accepted trade-off (see DECISIONS "www, VNI
-/// collapse, and Space committing something other than the screen"): the same
+/// which is wrong for them. Accepted trade-off (see DECISIONS "Space
+/// commits what the cancel rule showed"): the same
 /// rule fixes habit typing such as bitss/keyss. Pinned so a change here is
 /// deliberate; if one of these starts committing the raw word, update that
 /// section's numbers.

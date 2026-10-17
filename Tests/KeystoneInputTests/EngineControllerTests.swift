@@ -47,14 +47,17 @@ struct EngineControllerTests {
     }
 
     @Test func cmdKeyCommitsChordAndPassesThrough() {
+        // "users" shows "úe" mid-word; only a COMMIT (restore-if-invalid) turns it
+        // back into "users" — a reset would leave "úe" on screen.
         let c = EngineController(config: EngineConfig())
-        for ch in "vie" {
-            _ = c.handle(letter(ch))
-        }
-        let (suppress, edit, decision) = c.handle(RawKey(keyCode: 0, command: true, chars: "a"))
-        #expect(decision == .commitChord)
-        #expect(suppress == false)
-        #expect(edit == nil)
+        var acc: [Unicode.Scalar] = []
+        for ch in "users" { applyRealistically(c.handle(letter(ch)), to: &acc) }
+        #expect(String(String.UnicodeScalarView(acc)) == "úe")
+        let chord = c.handle(RawKey(keyCode: 0, command: true, chars: "a"))
+        #expect(chord.decision == .commitChord)
+        #expect(chord.suppress == false)
+        applyRealistically(chord, to: &acc)
+        #expect(String(String.UnicodeScalarView(acc)) == "users")
     }
 }
 

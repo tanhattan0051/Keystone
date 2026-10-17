@@ -460,8 +460,9 @@ struct EnglishModeResetClearsSentenceStartTests {
 // DECISIONS.md "Auto-capitalize: dấu kết câu phải có khoảng trắng theo sau"
 // decision A. Regression found replaying identical keystrokes against
 // e50c3ad and against base (English mode): a terminator typed right after a
-// reset (mouse click, app/keyboard-focus switch, a Cmd/Ctrl/Option chord, or
-// Vietnamese off→on) could never confirm any more, because `reset()`/
+// reset (at the time: mouse click, app/keyboard-focus switch, a Cmd/Ctrl/Option
+// chord, or Vietnamese off→on; a click or chord while active now commits via
+// `flushCaretMove()`, which lands on the same `.afterReset`) could never confirm any more, because `reset()`/
 // `resetInactive()` cleared the glue along with everything else — even
 // though the engine genuinely has no idea whether real text (pasted text,
 // pre-existing text, a word typed while Vietnamese was off) sits right

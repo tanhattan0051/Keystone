@@ -148,9 +148,13 @@ public final class Engine {
     }
 
     /// Drops the composing word WITHOUT finalizing it: whatever the last render
-    /// showed stays on screen as-is. Only for when the text on screen is not
-    /// ours to rewrite: deactivation, app switch / keyboard-focus change,
-    /// Secure Input began, and a click while Vietnamese is off. A click or a
+    /// showed stays on screen as-is. Used for an app switch / keyboard-focus
+    /// change and Secure Input (the text is no longer ours to rewrite), a click
+    /// while Vietnamese is off, and deactivation. Deactivation through the
+    /// modifier-only switch key arrives as flagsChanged, outside any keyDown,
+    /// so there is no edit to post there: a word composing at that moment keeps
+    /// its last render (a known gap, see DECISIONS.md "Commit the word at click
+    /// / chord / function-key boundaries"). A click or a
     /// Cmd/Ctrl/Option chord while active uses `flushCaretMove()` instead, so
     /// the word is committed properly (see `EngineController.handle`).
     public func reset() {
@@ -233,14 +237,16 @@ public final class Engine {
         return r
     }
 
-    /// English-mode Cmd/Ctrl/Option chord: drop the macro buffer without
-    /// matching it (the chord may paste or move the caret).
+    /// English-mode Cmd/Ctrl/Option chord or function key: drop the macro
+    /// buffer without matching it (the key may paste, move the caret or move
+    /// focus).
     public func resetInactive() {
         englishRawKeys = []
         // Same reasoning as `reset()`, including the `.afterReset` (not
-        // `.midSentence`) choice: the caller is a Cmd/Ctrl/Option chord
-        // in English mode (Cmd+V, Option+←, ...) — `EngineController.handle`'s
-        // `.commitChord` case while `!active` — which tells the engine
+        // `.midSentence`) choice: the caller is a Cmd/Ctrl/Option chord or a
+        // function key in English mode (Cmd+V, Option+←, F1, ...) —
+        // `EngineController.handle`'s `.commitChord, .passthrough` case while
+        // `!active` — which tells the engine
         // nothing about being at a sentence start, so neither a pending
         // terminator nor a sentence start may survive it — but also nothing
         // about what text (if any) already sits before the caret, so a
@@ -709,9 +715,10 @@ public final class Engine {
     /// What the screen should show WHILE the word is still being typed, for a
     /// word `cancelledLiteralApplies` accepted. An app switch or a keyboard-focus
     /// change resets the engine without committing (a click, chord or function
-    /// key commits it), so this display can become the final text. Hence: once the keystroke that fired the cancel was
-    /// itself displayed as the RAW keys, a later key may switch the screen to
-    /// the composed spelling only through the margin rule, unless the raw
+    /// key commits it), so this display can become the final text. Hence: once
+    /// the keystroke that fired the cancel was itself displayed as the RAW keys,
+    /// a later key may switch the screen to the composed spelling only through
+    /// the margin rule, unless the raw
     /// spelling died by that keystroke's position (the habit-cancel signature):
     /// see `RestoreDecision.chooseMidWordAfterCancel`, which has the rule and the
     /// measurements.

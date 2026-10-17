@@ -2881,9 +2881,10 @@ with each quick-consonant toggle on, by `CancelKeepsLiteralQuickConsonantsTests`
   Cmd/Ctrl/Option chord the engine resets without committing, and whatever was
   displayed stays; that is why the sticky rule above exists, and why it is not
   zero.
-  *(Update 2026-10-17: when the cancel display rule shows the composed spelling, Space now
-  commits it too, so `troff`/`errp` commit `trof`/`erp`. That trade is measured in
-  "Space commits what the cancel rule showed".)*
+  *(Update 2026-10-17: a click or chord now commits; only an app or keyboard-focus switch
+  still resets without committing. And when the cancel display rule shows the composed
+  spelling, Space now commits it too, so `troff`/`errp` commit `trof`/`erp`. That trade is
+  measured in "Space commits what the cancel rule showed".)*
 - It is a measured heuristic, not a guarantee. 89.39% of habit-typed words on the
   corpus come out right, not 100%. A natural word whose composed form is
   accidentally 2+ letters deeper in the dictionary than its raw one, and that the
@@ -2915,9 +2916,13 @@ The design spec already listed a click as a commit boundary (Part A §8); the co
 - English mode (Vietnamese off): a chord and a function key both call `resetInactive()`, so a
   macro trigger typed across F1 can no longer expand and backspace into the newly focused app. A
   click there still calls `reset()`, as before.
-- `resetBuffer()`/`Engine.reset()` remain for deactivation, app activation, keyboard-focus change
-  and Secure Input: the text on screen is no longer ours to rewrite, and committing would type into
-  the wrong app.
+- `resetBuffer()`/`Engine.reset()` remain for app activation, keyboard-focus change and Secure
+  Input: the text on screen is no longer ours to rewrite, and committing would type into the wrong
+  app. Deactivation also still resets, but for a different reason, and that one is a **known gap**:
+  the modifier-only switch key (⌃⇧ by default) arrives as flagsChanged, not keyDown, so there is no
+  keystroke to commit the word on. "test" + ⌃⇧ still leaves "tét" (same as before this change).
+  Fixing it means committing and posting the edit from the switch-key path before deactivating;
+  not done here.
 
 **Costs, stated plainly.** A click, chord or function key now runs full commit-time finalization:
 macros expand (trigger `ko` + click gives "không"), the force-English list and auto-capitalize apply,
@@ -2982,6 +2987,15 @@ those words; the habit gain is about 340 times larger. A dictionary-only sweep c
 off. Pinned by `ShippedCommitMatchesScreenTests`, `ChooseAtCommitAfterCancelTests` and
 `CommitAfterCancelTradeoffTests` (`troff`, `purrs` as known costs).
 
+**Known display jump, and why it stays.** Removing `maxx` from `protectedRealWords` (see the Lớp B
+section) lets the cancel rule show composed "max" for habit m,a,x,x; one more letter (`maxdepth`,
+`maxlen`) makes "max…" a non-prefix and the screen flips back to the raw keys, two characters at
+once ("max" → "maxxd"). Commits are the same as on base (`maxxdepth`), and base already jumps the
+same way for natural `errno` ("ern" → "errno"). A sticky-composed display (once the cancel rule
+showed composed, keep it) was built and measured on the corpus above: habit +0.88 points, but natural
+typing lost 723 tokens across 102 common identifiers (`errno`→`erno` 260, `errstr`, `passthrough`,
+`isspace`, `errmsg`). Rejected.
+
 **Rejected.** A prefix-based commit rule for every cancelled word (changes words whose screen shows
 raw). A word-only display rule (flips the habit wins back to raw mid-word). Protecting `troff` and
 friends in `protectedRealWords` (protected words become prefixes that hijack habit typing; see "Why
@@ -3023,8 +3037,9 @@ into `quêu`, a valid syllable no lexicon could rescue, and fixed no Vietnamese 
 VNI `luu7` stayed raw: the 7 handler tried the last u (`uư`, illegal) and its backward search used
 `lastIndex`, finding the same u again. The search now tries every eligible o/u from the end
 (skipping the qu glide) and the last-vowel branch also requires a nucleus prefix. `luu7`→`lưu`,
-`giua74`→`giữa`. Side effect: with `allowFreeToneMark` off, `ao7`/`luu7` no longer flash `aơ`/`luư`
-mid-word; commits are unchanged.
+`giua74`→`giữa`. Side effect: `ao7` no longer flashes `aơ` mid-word in either setting, and with
+`allowFreeToneMark` off `luu7` no longer flashes `luư`; commits are unchanged apart from the
+intended `uu7` fixes.
 
 **Measured** in the sweep above: 108 gi-glide typings and 198 VNI `uu7` typings now compose, 0
 regressions. Natural typing of all 235,976 lines of `/usr/share/dict/words`, base vs this whole
