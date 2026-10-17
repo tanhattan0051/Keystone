@@ -2,7 +2,7 @@
   { "name": "sac then backspace restores base", "keys": "as\b", "method": "telex", "orthography": "modern", "restoreIfInvalid": true, "expected": "a" },
   { "name": "sac then two backspaces empty", "keys": "as\b\b", "method": "telex", "orthography": "modern", "restoreIfInvalid": true, "expected": "" },
   { "name": "triphthong grows then backspace re-places tone", "keys": "tuyfa\b", "method": "telex", "orthography": "modern", "restoreIfInvalid": true, "expected": "tùy" },
-  { "name": "viet backspace drops coda keeps circumflex tone", "keys": "vieejt\b", "method": "telex", "orthography": "modern", "restoreIfInvalid": true, "expected": "việ" },
+  { "name": "viet backspace drops coda keeps circumflex tone", "keys": "toosn\b", "method": "telex", "orthography": "modern", "restoreIfInvalid": true, "expected": "tố" },
   { "name": "hoa backspace drops tone", "keys": "hoaf\b", "method": "telex", "orthography": "modern", "restoreIfInvalid": true, "expected": "hoa" },
   { "name": "dd then backspace", "keys": "dd\b", "method": "telex", "orthography": "modern", "restoreIfInvalid": true, "expected": "d" }
 ]

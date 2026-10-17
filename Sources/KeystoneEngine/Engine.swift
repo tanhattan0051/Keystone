@@ -658,7 +658,7 @@ public final class Engine {
         guard Phonology.isLegalOnset(p.onsetString, firstNucleus: p.firstNucleus) else { return false }
         guard Phonology.isLegalNucleus(p.nucleusString) else { return false }
         guard Phonology.isLegalCoda(p.codaString) else { return false }
-        guard Phonology.isLegalRime(nucleus: p.nucleusString, coda: p.codaString) else { return false }
+        guard Phonology.isCompleteRime(nucleus: p.nucleusString, coda: p.codaString) else { return false }
         guard Phonology.toneAllowed(comp.tone, coda: p.codaString) else { return false }
         return true
     }

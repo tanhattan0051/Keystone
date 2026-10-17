@@ -300,7 +300,7 @@ struct LiteralAfterCancelVietnameseUnchangedTests {
         ("dangd", "đang"), ("huow", "huơ"), ("khuow", "khuơ"), ("thuowr", "thuở"),
         ("huowngf", "hường"), ("ddang", "đang"), ("dieendf", "điền"), ("toiws", "tới"),
         ("moiws", "mới"), ("guiwr", "gửi"), ("chuiwr", "chửi"), ("nguiwr", "ngửi"),
-        ("nuawx", "nữa"), ("cuaw", "cưa"), ("muaw", "mưa"), ("hoaw", "hoă"),
+        ("nuawx", "nữa"), ("cuaw", "cưa"), ("muaw", "mưa"), ("hoawcj", "hoặc"),
         ("cangw", "căng"), ("quawng", "quăng"), ("vieejt", "việt"), ("tieesng", "tiếng"),
         ("tiseeng", "tiếng"), ("tooi", "tôi"), ("yeeu", "yêu"), ("nguowif", "người"),
         ("hocj", "học"), ("truowngf", "trường"), ("phowr", "phở"), ("ddepj", "đẹp"),

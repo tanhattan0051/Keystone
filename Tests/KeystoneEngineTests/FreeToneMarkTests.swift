@@ -92,7 +92,7 @@ struct FreeToneMarkOffTests {
     // MARK: Adjacent marks keep working when OFF (must not regress typing)
 
     @Test func telexAdjacentCircumflexStillWorks() {
-        #expect(typeThroughEngine("aa ", config: telexOff) == "â ")
+        #expect(typeThroughEngine("aan ", config: telexOff) == "ân ")
     }
 
     @Test func telexAdjacentDStrokeStillWorks() {
@@ -106,7 +106,7 @@ struct FreeToneMarkOffTests {
     }
 
     @Test func vniAdjacentCircumflexStillWorks() {
-        #expect(typeThroughEngine("a6 ", config: vniOff) == "â ")
+        #expect(typeThroughEngine("a6n ", config: vniOff) == "ân ")
     }
 
     @Test func vniAdjacentDStrokeStillWorks() {

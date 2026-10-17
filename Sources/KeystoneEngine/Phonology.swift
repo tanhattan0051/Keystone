@@ -123,6 +123,31 @@ enum Phonology {
         return !openOnlyNuclei.contains(nucleus)
     }
 
+    /// Nuclei that Vietnamese never writes open: they need a consonant coda
+    /// (ăn, ân, hoặc, khuân, tiếng, yên, muốn, khuyên). `âu`/`ây` are separate
+    /// nuclei and are not affected; an open `ươ` is already downgraded to `uơ`
+    /// before validation, so it is not listed.
+    static let closedOnlyNuclei: Set<String> = [
+        "ă", "â", "oă", "uâ", "iê", "yê", "uô", "uyê",
+    ]
+
+    /// Commit-time rime validity: `isLegalRime` plus the rules that only make
+    /// sense once the word is finished.
+    ///
+    /// Why two rime predicates: mid-word, an open `ă`/`iê` is just a prefix of
+    /// the syllable still being typed (tieeng → "tiê" → tiêng), so
+    /// `Engine.isUnrecoverable` (mid-word eager restore) keeps the permissive
+    /// `isLegalRime`. At commit nothing more will arrive, so a syllable like
+    /// "să" (saw), "díc" (disc) or "thíng" (things) is a certain English
+    /// lookalike and is rejected here (used only by `Engine.isValid`).
+    static func isCompleteRime(nucleus: String, coda: String) -> Bool {
+        guard isLegalRime(nucleus: nucleus, coda: coda) else { return false }
+        if coda.isEmpty { return !closedOnlyNuclei.contains(nucleus) }
+        // Vietnamese writes inh/ich after a bare i/y, never ing/ic.
+        if (nucleus == "i" || nucleus == "y"), coda == "ng" || coda == "c" { return false }
+        return true
+    }
+
     // MARK: Tone restriction (§5.4)
 
     /// Syllables closed by a stop coda (p t c ch) may bear only sắc or nặng.
