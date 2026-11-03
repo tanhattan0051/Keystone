@@ -3597,3 +3597,28 @@ code tables and the Converter.
 8. **cp1258 -> Unicode no longer traps on emoji.** The pseudo-byte decoder used
    `UInt16(scalar.value)`, which crashes above U+FFFF; it now uses `UInt16(exactly:)`
    and copies such scalars unchanged.
+
+## Menu bar không báo V khi bộ gõ không chạy
+
+Trước đây icon menu bar hiện V mỗi khi `enabled` bật, kể cả lúc tap không chạy được (chưa có quyền
+Accessibility, hoặc cần khởi động lại), nên icon báo sai đúng lúc gõ hỏng. Giờ icon lấy từ `MenuBarState`
+(`Sources/KeystoneInput/MenuBarState.swift`), thứ tự ưu tiên:
+
+1. Chưa có quyền Accessibility -> tam giác cảnh báo.
+2. Secure Input đang bật -> ổ khoá.
+3. `needsRelaunch` -> tam giác cảnh báo.
+4. Còn lại: V nếu `enabled`, E nếu không.
+
+Secure Input đứng trước `needsRelaunch` vì chưa kiểm chứng được tap có báo "đang chạy" khi Secure
+Input bật hay không, và `AppModel.refresh()` không có guard: tap mù có thể làm `needsRelaunch` bật và
+báo nhầm người đang gõ mật khẩu phải khởi động lại. Menu trong `MenuBarContent.swift` vốn đã kiểm
+theo thứ tự này. Không có đầu vào `tapRunning`: `needsRelaunch` chỉ bật sau hai lần poll thấy tap
+không chạy, đó là khoảng chờ giúp icon không nháy cảnh báo lúc mới mở app. Đánh đổi: khi tap không
+tạo được, icon có thể hiện V hoặc E trong khoảng chờ này (tối đa một lần poll, khoảng 1,5 giây) rồi mới
+chuyển sang tam giác. Nếu thấy khó chịu trên máy thật thì thêm trạng thái "đang khởi động" riêng.
+
+Toggle "Gõ tiếng Việt" bị khoá và hiện tắt khi bộ gõ dừng, nhưng giá trị `enabled` đã lưu không bị
+đổi theo trạng thái quyền. Phím chuyển cũng bị bỏ qua khi bộ gõ dừng: icon vẫn là tam giác nên lần đổi
+đó không nhìn thấy được, trong khi nó vẫn được ghi vào trí nhớ theo ứng dụng.
+
+**Chưa kiểm chứng:** hành vi này chưa được xem trên app đang chạy, mới có test cho hàm thuần.

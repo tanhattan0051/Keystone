@@ -11,8 +11,11 @@ struct MenuBarContent: View {
 
     var body: some View {
         Group {
-            Toggle("Gõ tiếng Việt", isOn: $model.enabled)
-                .disabled(!model.accessibilityTrusted)
+            Toggle("Gõ tiếng Việt", isOn: Binding(
+                get: { model.enabled && !model.menuBarState.isInputStopped },
+                set: { model.enabled = $0 }
+            ))
+            .disabled(model.menuBarState.isInputStopped)
 
             Picker("Kiểu gõ", selection: $model.inputMethod) {
                 ForEach(InputMethod.allCases) { Text($0.pickerLabel).tag($0) }

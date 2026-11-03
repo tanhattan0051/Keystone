@@ -66,20 +66,24 @@ private struct MenuBarLabel: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        // "V" khi đang gõ tiếng Việt, "E" khi đang ở chế độ tiếng Anh — cho
-        // thấy ngay chế độ hiện tại ngay trên menu bar. Khi macOS đang bật
-        // nhập bảo mật (Secure Input) thì bộ gõ không nhận được phím nào, nên
-        // hiện ổ khoá thay cho V/E. `.onAppear` gắn lên cả Group nên nhánh nào
-        // hiện ra cũng có nó; hai việc bên trong đều chạy một-lần/idempotent
-        // (performLaunchOpenIfNeeded có cờ didAttemptLaunchOpen).
+        // Icon lấy từ model.menuBarState: "V"/"E" khi bộ gõ chạy được; ổ khoá
+        // khi macOS đang bật nhập bảo mật (Secure Input); tam giác cảnh báo khi
+        // chưa có quyền Accessibility hoặc cần khởi động lại, vì lúc đó bộ gõ
+        // không chạy nên không được hiện V. Có accessibilityLabel cho VoiceOver.
+        // `.onAppear` gắn lên cả Group nên nhánh nào hiện ra cũng có nó; hai việc
+        // bên trong đều chạy một-lần/idempotent (performLaunchOpenIfNeeded có cờ
+        // didAttemptLaunchOpen).
+        let state = model.menuBarState
         Group {
-            if model.secureInputActive {
-                Image(systemName: "lock.fill")
-            } else {
-                Text(model.enabled ? "V" : "E")
+            switch state.glyph {
+            case .letter(let letter):
+                Text(letter)
                     .font(.system(size: 14, weight: .bold, design: .rounded))
+            case .systemImage(let name):
+                Image(systemName: name)
             }
         }
+        .accessibilityLabel(state.accessibilityLabel)
         .onAppear {
             model.openWindowRequest = { id in openWindow(id: id) }
             model.performLaunchOpenIfNeeded()
