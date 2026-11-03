@@ -16,7 +16,6 @@ diệt tận gốc lỗi kinh điển *"đang gõ tự nhiên mất tiếng Vi�
 ![UI](https://img.shields.io/badge/UI-SwiftUI-1575F9)
 ![Tests](https://img.shields.io/badge/tests-745%20·%20251%20ca%20corpus-brightgreen)
 ![License](https://img.shields.io/badge/License-GPLv3-blue)
-[![CI](https://github.com/tanhattan0051/Keystone/actions/workflows/ci.yml/badge.svg)](https://github.com/tanhattan0051/Keystone/actions/workflows/ci.yml)
 
 [Vì sao Keystone](#vì-sao-keystone) ·
 [Tính năng](#tính-năng) ·
