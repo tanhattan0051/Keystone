@@ -465,6 +465,17 @@ final class AppModel {
     /// the auto-open-at-launch behavior in `performLaunchOpenIfNeeded()`.
     var needsOnboarding: Bool { !accessibilityTrusted && !didFinishOnboarding }
 
+    /// What the menu bar icon and the on/off toggle should show. See
+    /// `MenuBarState` for the priority order.
+    var menuBarState: MenuBarState {
+        MenuBarState(
+            accessibilityTrusted: accessibilityTrusted,
+            needsRelaunch: needsRelaunch,
+            secureInputActive: secureInputActive,
+            enabled: enabled
+        )
+    }
+
     private let controller: EngineController
     private let tap: EventTapController
     private var statusTimer: Timer?
@@ -1140,6 +1151,13 @@ final class AppModel {
         // toggle (a deliberate mouse action) still works.
         guard !secureInputActive else {
             Self.log.info("switch key ignored: Secure Input is on")
+            return
+        }
+        // The icon stays on the warning triangle here, so a flip would be
+        // invisible, yet it would still be saved to per-app memory and surface
+        // later as an unexplained "E" once the input method runs again.
+        guard !menuBarState.isInputStopped else {
+            Self.log.info("switch key ignored: the input method is not running")
             return
         }
         // The recorder suspended the engine; toggling `enabled` here would run

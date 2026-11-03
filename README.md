@@ -208,7 +208,7 @@ làm theo 4 bước:
 
 Cửa sổ **Onboarding** tự mở lần đầu để hướng dẫn cấp quyền; nút "Bắt đầu gõ" / "Để sau" không bao
 giờ bị khoá. Nếu cấp quyền xong mà tap chưa tạo được, menu bar sẽ hiện nút **"Khởi động lại
-Keystone"**.
+Keystone"**. Icon tam giác cảnh báo trên menu bar nghĩa là bộ gõ đang không chạy; menu sẽ nói cần làm gì.
 
 **Đã cấp quyền mà gõ tiếng Việt vẫn không ra ở mọi ứng dụng?** Nếu menu bar đang hiện **🔒**, đó là
 nhập bảo mật của macOS (Secure Input) chứ không phải lỗi quyền: một ứng dụng đang giữ nó, thường là
