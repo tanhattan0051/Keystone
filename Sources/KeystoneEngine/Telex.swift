@@ -30,6 +30,11 @@ struct Composition: Equatable {
     /// A same-key double-strike cancel fired in this word (only ever true when
     /// `literalAfterCancel` is on).
     var cancelled: Bool = false
+    /// Indices into the folded key list of the keys that UNDID a circumflex: the
+    /// third key of aaa/eee/ooo, or of an across-coda or tone-split pair like
+    /// t,a,n,a,a. A fact about the fold only: not all of them are escapes (exceed,
+    /// cocoon undo too); `Engine.circumflexEscapeIndices` picks the literal runs.
+    var circumflexUndoKeys: [Int] = []
 }
 
 /// The effect the previous key produced — used for double-strike detection.
@@ -70,8 +75,9 @@ enum Telex {
         // the cancelling keystroke naturally re-folds without it (see
         // `Engine.rerender`).
         var cancelled = false
+        var circumflexUndoKeys: [Int] = []
 
-        for ch in keys {
+        for (i, ch) in keys.enumerated() {
             let up = ch.isUppercase
             let lo = Character(ch.lowercased())
             let effect: Effect
@@ -87,11 +93,18 @@ enum Telex {
                                allowFreeToneMark: allowFreeToneMark,
                                freeMarkAcrossCoda: freeMarkAcrossCoda)
                 if literalAfterCancel && effect == .literal { cancelled = true }
+                // The only `.literal` that a/e/o can return right after a
+                // `.mark(key: itself)` is the circumflex double-strike undo.
+                if effect == .literal, "aeo".contains(lo),
+                   case .mark(let k, _) = prevEffect, k == lo {
+                    circumflexUndoKeys.append(i)
+                }
             }
             prevChar = lo
             prevEffect = effect
         }
-        return Composition(cells: cells, tone: tone, cancelled: cancelled)
+        return Composition(cells: cells, tone: tone, cancelled: cancelled,
+                           circumflexUndoKeys: circumflexUndoKeys)
     }
 
     // MARK: - Per-key application

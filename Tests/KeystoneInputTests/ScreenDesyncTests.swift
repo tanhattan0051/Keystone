@@ -239,7 +239,7 @@ struct ScreenDesyncEnglishRegressionTests {
         "coiffed", "squirreling", "moussing", "suss", "terra", "torr", "barre",
         "lassi", "frisson", "farro", "barrie", "currie", "buffo", "triffid",
         "transsonic", "hassidic", "hassidim", "chassidim", "mycorrhiza", "degass",
-        "unbiassed", "aaa", "poisson", "cassava", "cassaba", "hassan",
+        "unbiassed", "poisson", "cassava", "cassaba", "hassan",
         "parramatta", "kerr", "starr", "neff", "foxx",
         // New: plurals/inflections shaped like the bug report ("tasks",
         // "servers", "hashes", "offsets" themselves live in
@@ -256,5 +256,12 @@ struct ScreenDesyncEnglishRegressionTests {
     @Test(arguments: words)
     func englishWordCommitsUnchangedThroughController(_ w: String) {
         #expect(typeAndFlush(w) == w)
+    }
+
+    // Natural `aaa` commits `aa`: the screen already shows "aa" (the third a undid
+    // the circumflex); matches OpenKey. The literal AAA is typed a,a,a,a.
+    @Test func naturalAaaCommitsAa() {
+        #expect(typeAndFlush("aaa") == "aa")
+        #expect(typeAndFlush("aaaa") == "aaa")
     }
 }
