@@ -172,6 +172,29 @@ enum Phonology {
         return true
     }
 
+    /// The only nuclei Vietnamese closes with nh/ch: anh/ach, ênh/êch,
+    /// inh/ich, (h)uynh/huých, oanh/hoạch, huênh/khuếch. Everything else does
+    /// not exist with them: ânh, âch, ônh, ôch, ơnh, ăch, enh, tiênh, uyênh …
+    static let palatalNuclei: Set<String> = ["a", "ê", "i", "y", "oa", "uê", "uy"]
+
+    /// ch also closes uyê in khuyếch (khuyếch đại, khuyếch tán), the common
+    /// variant of khuếch; OpenKey types it with the mark at the end too.
+    static let chOnlyNuclei: Set<String> = ["uyê"]
+
+    /// May `coda` close `nucleus`, as far as the palatal codas are concerned?
+    /// Deliberately NOT part of `isLegalRime`/`isCompleteRime`: it only gates
+    /// the Telex across-coda circumflex, so that `tanha` stays tanha instead of
+    /// becoming "tânh" (OpenKey never builds it either). Folding it into those
+    /// would also change eager restore and commit for the adjacent spelling
+    /// (`oonh` → "ônh", which OpenKey keeps too); see DECISIONS.md.
+    static func palatalCodaAllowed(nucleus: String, coda: String) -> Bool {
+        switch coda {
+        case "nh": return palatalNuclei.contains(nucleus)
+        case "ch": return palatalNuclei.contains(nucleus) || chOnlyNuclei.contains(nucleus)
+        default:   return true
+        }
+    }
+
     // MARK: Tone restriction (§5.4)
 
     /// Syllables closed by a stop coda (p t c ch) may bear only sắc or nặng.

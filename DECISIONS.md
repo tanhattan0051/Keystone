@@ -3666,3 +3666,56 @@ Toggle "Gõ tiếng Việt" bị khoá và hiện tắt khi bộ gõ dừng, nh�
 đó không nhìn thấy được, trong khi nó vẫn được ghi vào trí nhớ theo ứng dụng.
 
 **Chưa kiểm chứng:** hành vi này chưa được xem trên app đang chạy, mới có test cho hàm thuần.
+
+## Across-coda circumflex refuses illegal nh/ch rimes (2026-11-10)
+
+**Bug.** With `freeMarkAcrossCoda` on (the shipped default), Telex put a
+circumflex on an earlier a/o across an `nh`/`ch` coda: `tanha` showed "tânh"
+and even committed it, because `isCompleteRime` accepts `ânh`. `sacha` flashed
+"sâch", and the English words `searches`, `reached` and `teaches` flashed "sếach"
+and "rêach" mid-word. Vietnamese closes only the nuclei a, ê, i, y, oa, uê and
+uy with `nh`/`ch` (anh, ênh, inh, huynh, oanh, khuếch). `ch` also follows uyê
+in khuyếch, the common variant of khuếch. ânh, âch, ônh, ôch, iênh and uyênh do
+not exist. A differential run against a compiled OpenKey engine found 56
+sequences where Keystone composed â/ô there and OpenKey never did.
+
+**Fix.** The across-coda branch of `Telex.apply` now keeps the circumflex only if
+the target's rime is legal. `SyllableOps.rime(aroundVowelAt:in:)` gives the
+target's vowel run (qu/gi glide folded through `foldedNucleusLetters`) and the
+consonants after it. The check is `Phonology.isLegalRime` plus the new
+`Phonology.palatalCodaAllowed` (`palatalNuclei`, plus `chOnlyNuclei` = uyê for
+khuyếch). A refused key is appended as a plain vowel, as before. `tanha` now
+reads t, ta, tan, tanh, tanha, and the committed text is "tanha", the same as
+OpenKey. `tenhe` still gives tênh, `khuechse` khuếch, `khuyechse` khuyếch,
+`quenhfe` quềnh, `tana` tân and `hopoj` hộp. The `isLegalRime` part only shows
+when restore is off: `tauna` used to commit "tâun" there and now commits
+"tauna". With the shipped settings, eager restore already reverted it.
+
+**Deliberately not in `isLegalRime`/`isCompleteRime`.** That would also change
+eager restore and commit for the adjacent spelling. `oonh` and `taanh` would
+restore to raw keys, but OpenKey keeps them as "ônh" and "tânh". It would also
+make every prefix like `tenh` (before `e` → tênh) count as dead. This change only
+stops the across-coda mark from building an impossible rime. Whether the adjacent
+path should also reject these rimes is a separate decision. VNI's `6` key has the
+same across-coda reach (`tanh6` → tânh) and is also untouched.
+
+**Measured (main vs patched, shipped config with the real lexicon, bounded runs):**
+- Tân's own Vietnamese prose (2,545 distinct syllables from the Obsidian vault),
+  typed three ways (adjacent marks, marks at the end, tone before marks):
+  0 changes, mid-word or committed. A review agent also re-typed them with
+  every mark and tone position, in lowercase, Title case and ALL CAPS
+  (about 43,000 sequences). The only change it found was `khuyechse`, which is
+  now fixed.
+- `/usr/share/dict/words` (235,974 words), typed naturally: 3 committed changes,
+  all fixes (`tanha`, `Pascha`, `lachsa` no longer commit tânh/Pấch/lấch), and
+  276 mid-word flashes removed (Achaean, achar …). No step gained a mark.
+- Man-page and vault prose tokens (18,388): 0 committed changes. 15 mid-word
+  flashes removed (searches, reached, teaches …).
+- Every onset × nucleus × coda × tone combination (86,130), typed with marks at
+  the end and with the tone first: 2,256 combinations change, 1,360 of them in
+  the committed text. All are illegal palatal rimes (ânh, ôch, iênh, uyênh,
+  uônh, yêch, quyêch …). Nothing else changed.
+- OpenKey parity on the 2,980 escape/across-coda sequences: final text matches
+  went from 892 to 903, and per-keystroke matches from 1,014 to 1,070.
+
+Pinned by `AcrossCodaPalatalCodaTests.swift`.

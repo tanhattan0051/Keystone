@@ -83,6 +83,30 @@ enum SyllableOps {
         return String(letters)
     }
 
+    /// The nucleus and coda around the vowel run containing `index`. Used to
+    /// judge the rime an across-coda mark would create when the target is not
+    /// the trailing vowel run. For the word's first vowel run the nucleus is
+    /// `foldedNucleusLetters` of the cells up to the run's end, so the qu/gi
+    /// glide is folded exactly as everywhere else; a later run has no onset
+    /// glide to fold.
+    static func rime(aroundVowelAt index: Int, in cells: [Cell]) -> (nucleus: String, coda: String) {
+        var start = index, end = index
+        while start > 0, cells[start - 1].isVowel { start -= 1 }
+        while end + 1 < cells.count, cells[end + 1].isVowel { end += 1 }
+
+        let isFirstRun = !cells[..<start].contains { $0.isVowel }
+        let nucleus = isFirstRun
+            ? foldedNucleusLetters(Array(cells[...end]))
+            : String((start...end).map { NFC.qualityLetter(cells[$0].base, cells[$0].mark) })
+
+        var coda = ""
+        for c in cells[(end + 1)...] {
+            if c.isVowel { break }
+            coda.append(c.dStroke ? "đ" : c.consonant)
+        }
+        return (nucleus, coda)
+    }
+
     /// The cell a key produces when Telex/VNI transforms are suppressed (see
     /// `EngineConfig.literalAfterCancel`): a vowel letter (a/e/i/o/u/y)
     /// becomes a plain, unmarked vowel cell; everything else (consonants,

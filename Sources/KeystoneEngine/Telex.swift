@@ -336,7 +336,9 @@ enum Telex {
             // "Deferred across-coda circumflex" for why deferring it (to kill the
             // flash) was tried and reverted: it delayed EVERY Vietnamese
             // across-coda word to the boundary, which the maintainer types too
-            // often to accept.
+            // often to accept. It refuses a target whose rime would be illegal
+            // with its coda (tanha stays tanha, never tânh — OpenKey does the
+            // same); tenhe→tênh still works.
             if ei == nil, canCirc, freeMarkAcrossCoda {
                 var acrossCoda: Int? = nil
                 for i in cells.indices.reversed() {
@@ -346,7 +348,10 @@ enum Telex {
                 }
                 if let ai = acrossCoda {
                     cells[ai].mark = .circumflex
-                    if SyllableOps.marksLegal(cells) {
+                    let rime = SyllableOps.rime(aroundVowelAt: ai, in: cells)
+                    if SyllableOps.marksLegal(cells),
+                       Phonology.isLegalRime(nucleus: rime.nucleus, coda: rime.coda),
+                       Phonology.palatalCodaAllowed(nucleus: rime.nucleus, coda: rime.coda) {
                         return .mark(key: lo, targets: [ai])   // consume the key, no append
                     }
                     cells[ai].mark = .none   // reject → fall through to append
