@@ -45,10 +45,31 @@ struct CollapseDoubledLiteralsTests {
         #expect(telex("add") == "add")
         #expect(telex("buddy") == "buddy")
     }
+    private func telexDropping(_ s: String, _ idx: Set<Int>) -> String {
+        String(Engine.collapseDoubledLiterals(Array(s), inputMethod: .telex, dropping: idx))
+    }
+    @Test func droppingOmitsTheGivenIndices() {
+        // The caller (the fold) names the circumflex-applying key; index 1 of aaa...
+        #expect(telexDropping("aaapanel", [1]) == "aapanel")
+        #expect(telexDropping("eeexit", [1]) == "eexit")
+        #expect(telexDropping("AAa", [1]) == "Aa")
+    }
+    @Test func aRunOfThreeIsUntouchedWithoutIndices() {
+        // Whether aaa is an escape depends on the fold, not on the pattern.
+        #expect(telex("aaa") == "aaa")
+        #expect(telex("aaapanel") == "aaapanel")
+        #expect(telex("ooops") == "ooops")
+    }
+    @Test func droppingComposesWithDddAndWw() {
+        #expect(telexDropping("aaadddos", [1]) == "aaddos")
+        #expect(telexDropping("wwaaa", [3]) == "waa")
+    }
     @Test func vniIsTheIdentity() {
         #expect(vni("dddos") == "dddos")
         #expect(vni("swwim") == "swwim")
         #expect(vni("www") == "www")
+        #expect(vni("aaapanel") == "aaapanel")
+        #expect(String(Engine.collapseDoubledLiterals(Array("aaa"), inputMethod: .vni, dropping: [1])) == "aaa")
     }
     @Test func simpleTelexBehavesLikeTelex() {
         #expect(String(Engine.collapseDoubledLiterals(Array("swwim"), inputMethod: .simpleTelex1)) == "swim")

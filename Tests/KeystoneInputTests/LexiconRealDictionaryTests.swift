@@ -76,13 +76,60 @@ struct LexiconRealDictionaryTests {
         "coiffed", "squirreling", "moussing", "suss", "terra", "torr", "barre",
         "lassi", "frisson", "farro", "barrie", "currie", "buffo", "triffid",
         "transsonic", "hassidic", "hassidim", "chassidim", "mycorrhiza", "degass",
-        "unbiassed", "aaa", "poisson", "cassava", "cassaba", "hassan",
+        "unbiassed", "poisson", "cassava", "cassaba", "hassan",
         "parramatta", "kerr", "starr", "neff", "foxx",
     ]
 
     @Test(arguments: falsePositiveWords)
     func falsePositiveWordCommitsUnchanged(_ w: String) {
         #expect(typeAndFlush(w, lexicon: realLexicon) == w, "natural typing of \(w)")
+    }
+
+    // Natural `aaa` (a,a,a) commits `aa`: the screen already shows "aa" (the third
+    // a undid the circumflex), so Space must not jump back to three letters. This
+    // matches OpenKey; the literal AAA is typed a,a,a,a. See DECISIONS.md
+    // "The aaa/eee/ooo escape in raw-restore".
+    @Test func naturalAaaCommitsAa() {
+        #expect(typeAndFlush("aaa", lexicon: realLexicon) == "aa")
+        #expect(typeAndFlush("aaaa", lexicon: realLexicon) == "aaa")
+    }
+
+    // MARK: - The aaa/eee/ooo circumflex escape, through the shipped path
+    // (EngineController + real lexicon + cancel rule ON). Natural words with the
+    // V-C-V-V shape (exceed, cocoon, esteem) must commit exactly as main does;
+    // only a literal a,a,a / e,e,e / o,o,o run is the escape. Expected values were
+    // checked against a `git archive HEAD` copy: main commits each word as typed,
+    // except IEEE, which main commits as IEEE and this change as IEE (the screen
+    // already shows IEE; the literal is typed I,E,E,E,E).
+    @Test(arguments: ["esteem", "exceed", "exceeds", "veneer", "cocoon", "monsoon",
+                      "mongoose", "tepee", "beseech", "Canaan", "nocookie"])
+    func naturalVcvvWordsCommitAsMainDoes(_ w: String) {
+        #expect(typeAndFlush(w, config: Self.cancelRuleOn, lexicon: realLexicon) == w)
+    }
+    @Test func ieeeCommitsWhatTheScreenShows() {
+        #expect(typeAndFlush("IEEE", config: Self.cancelRuleOn, lexicon: realLexicon) == "IEE")
+    }
+    @Test(arguments: [("aaapenl", "aapenl"), ("aaapanel", "aapanel"),
+                      ("eeexit", "eexit"), ("ooops", "oops")])
+    func literalEscapeRunDropsTheCircumflexKey(_ typed: String, _ want: String) {
+        let c = EngineController(config: Self.cancelRuleOn)
+        c.setLexicon(realLexicon)
+        var acc: [Unicode.Scalar] = []
+        for ch in typed {
+            applyRealistically(c.handle(letter(ch)), to: &acc)
+            #expect(!String(String.UnicodeScalarView(acc)).hasPrefix("aaa"))
+        }
+        applyRealistically(c.handle(RETURN), to: &acc)
+        #expect(String(String.UnicodeScalarView(acc)) == want)
+    }
+    @Test func backspaceAfterTheEscapeThenAgainCommitsAa() {
+        let c = EngineController(config: Self.cancelRuleOn)
+        c.setLexicon(realLexicon)
+        var acc: [Unicode.Scalar] = []
+        for k in [letter("a"), letter("a"), letter("a"), BACKSPACE, letter("a"), RETURN] {
+            applyRealistically(c.handle(k), to: &acc)
+        }
+        #expect(String(String.UnicodeScalarView(acc)) == "aa")   // main: "aaa"
     }
 
     // MARK: - Natural identifiers and names, with the cancel rule ON.

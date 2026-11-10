@@ -220,11 +220,13 @@ struct CancelKeepsLiteralUnchangedFromMainTests {
     // circumflex) while the sắc from `s` survives. The word is still a
     // Vietnamese attempt (`taóo`), so the existing restore keeps it. The lexicon
     // holds the composed "taóo" so a missing tone gate would show (main's own
-    // `choose` rejects it: it is not a subsequence of the raw keys). Pinned
-    // from main.
+    // `choose` rejects it: it is not a subsequence of the raw keys). The third o
+    // undid a visible circumflex (taố→taóo), so the raw restore drops that escape
+    // key and commits `tasoo`; OpenKey's own engine gives `tasoo` too (verified by
+    // compiling its Engine.cpp).
     @Test func aCancelThatLeavesAToneIsMain() {
         let lex = Lexicon(["ta\u{00F3}o"])
-        #expect(typeThroughEngine("tasooo ", config: on, lexicon: lex) == "tasooo ")
+        #expect(typeThroughEngine("tasooo ", config: on, lexicon: lex) == "tasoo ")
         #expect(typeStepwise("tasooo", config: on, lexicon: lex)
                 == ["t", "ta", "tá", "táo", "taố", "taóo"])
     }

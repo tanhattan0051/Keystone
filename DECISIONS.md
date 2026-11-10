@@ -2519,6 +2519,50 @@ untouched; a tone-key double ("boss") never involves d at all. So `dddos`→`ddo
 `DStrokeEscapeTests.swift`. (`ddos` typed with two d's still composes to `đó` —
 that homograph is inherent and unchanged.)
 
+## The aaa/eee/ooo escape in raw-restore
+
+The bug: typing a,a,a,p,e,n,l (aaPanel) showed "aaape…" with three a's in the
+middle of the word and again at commit, although the screen had shown "aa" after
+the third a. The raw restore (eager restore in `Engine.rerender`, commit restore
+in `Engine.finalize`) replays the raw keystrokes, and it kept the key that undid
+the circumflex, so the escape key came back as a literal letter.
+
+The rule: `Telex.fold` records, in `Composition.circumflexUndoKeys`, every key
+that undid a circumflex (the third key of aaa/eee/ooo, or of an across-coda pair
+like t,a,n,a,a). `Engine.circumflexEscapeIndices` turns each into the index of
+the key that applied the circumflex (always the key just before) and
+`collapseDoubledLiterals(dropping:)` omits it. It is dropped only when the fold
+really undid a circumflex that the screen showed. Not after an earlier cancel
+(tassaaa, wwaaa, dddooo, arrooow: every later key is literal, nothing was undone)
+and not when eager restore was already showing raw keys (whenceeer, freeext: no
+circumflex was ever on screen). The middle key is dropped, not the third, so the
+case on screen is kept: Telex keeps the case of key 1 and key 3 (AAa gives Aa,
+aAa gives aa, aaA gives aA).
+
+Literal-run guard: the fold also undoes a circumflex across a coda or a tone key
+(t,a,n,a,a; b,e,s,e,e), and that V-C-V-V shape is ordinary English (exceed,
+cocoon, esteem, veneer, monsoon, tepee, Canaan: 126 of 8,621 dictionary words
+lost a real letter in the first version). So a key is dropped only when the
+three keys are a literal run in the raw keys (a,a,a / e,e,e / o,o,o). With this
+guard a reviewer measured 0 natural-typing differences from main on the
+dictionary. Across-coda t,a,n,a,a and habit shapes like t,r,e,a,t,e,e keep main's
+behavior. This is a measured trade: natural typing equals main except the
+intended aaa/IEEE family, and habit typing is still better than main. Pre-existing
+and unchanged: dd followed by a run (d,d,a,a,a shows "đaa") still jumps at Space.
+
+Parity: OpenKey pops the undo key from its KeyStates (Engine.cpp, `_stateIndex--`
+after vRestore), so its raw restore also has the two letters. Verified for
+`tasooo` by compiling OpenKey's Engine.cpp: it gives `tasoo`.
+
+Trade-off: natural aaa / IEEE now commit `aa` / `IEE`, which is what the screen
+already showed, instead of jumping back to three letters at Space. The literal
+is typed with one more key (a,a,a,a gives aaa; I,E,E,E,E gives IEEE). The "aaa"
+entry in `protectedRealWords` therefore no longer makes natural a,a,a commit
+"aaa".
+
+The `ddd` and `ww` escapes stay pattern-based and have the same after-cancel flaw
+(for example `arrowweed`). Not changed here.
+
 ## Secure Input: phát hiện và báo (spec §7)
 
 Design spec §7 ("Secure input mode") was written on day one and never built:

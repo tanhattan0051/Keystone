@@ -329,7 +329,7 @@ public final class Engine {
             // raw-rendering `finalize`'s revert-to-raw branch uses, so there
             // is no visual jump when the word boundary is eventually reached
             // (see DECISIONS.md "Eager restore (spellCheck / Phase 7)").
-            newUnits = Engine.collapseDoubledLiterals(rawKeys, inputMethod: config.inputMethod)
+            newUnits = collapsedRaw(rawKeys)
                 .flatMap { table.plain($0) }
         } else {
             newUnits = encode(comp, table: table)
@@ -400,7 +400,7 @@ public final class Engine {
         // "ww" pair (boss, wrong) are untouched. Shared by both the
         // force-English and restore-if-invalid branches below, and by
         // `revertToRawUnits`.
-        let collapsedRawKeys = Engine.collapseDoubledLiterals(rawKeys, inputMethod: config.inputMethod)
+        let collapsedRawKeys = collapsedRaw(rawKeys)
         let rawWord = String(collapsedRawKeys)
         // The composed word is rendered through the UNICODE table regardless
         // of the active code table (a legacy table's ASCII bytes are
@@ -500,12 +500,19 @@ public final class Engine {
     ///     the escape d here reverts "dddos"→"ddos", "dddong"→"ddong". A plain
     ///     "dd" pair (English "add", "buddy") is NOT touched — only a run of
     ///     three. See DECISIONS.md "The ddd→dd escape in raw-restore".
+    ///   - `aaa` → `aa`, `eee` → `ee`, `ooo` → `oo`: the circumflex escape. Unlike
+    ///     ddd/ww this is NOT pattern-based: the caller passes the key to omit in
+    ///     `dropping`, because a run of three is only an escape when the fold
+    ///     actually undid a circumflex the screen was showing. See DECISIONS.md
+    ///     "The aaa/eee/ooo escape in raw-restore".
     ///
     /// VNI is the identity: its escapes are digits, and `w`/`d` are ordinary
     /// letters there ("dddos", "swwim" are what the user typed).
     ///
     /// Case of the kept character(s) is preserved.
-    static func collapseDoubledLiterals(_ keys: [Character], inputMethod: InputMethod) -> [Character] {
+    static func collapseDoubledLiterals(
+        _ keys: [Character], inputMethod: InputMethod, dropping escapeIndices: Set<Int> = []
+    ) -> [Character] {
         if inputMethod == .vni { return keys }
         func isD(_ c: Character) -> Bool { c == "d" || c == "D" }
         func isW(_ c: Character) -> Bool { c == "w" || c == "W" }
@@ -513,6 +520,8 @@ public final class Engine {
         var i = 0
         while i < keys.count {
             let ch = keys[i]
+            // A circumflex escape chosen by the caller: skip this key.
+            if escapeIndices.contains(i) { i += 1; continue }
             // "ddd" → keep two d's, drop the third (the đ-escape).
             if isD(ch), i + 2 < keys.count, isD(keys[i + 1]), isD(keys[i + 2]) {
                 out.append(ch); out.append(keys[i + 1])
@@ -528,6 +537,34 @@ public final class Engine {
             i += 1
         }
         return out
+    }
+
+    /// Indices of the keys that APPLIED a circumflex which a later key undid
+    /// (aaa/eee/ooo), when the screen really showed that circumflex. Dropping the
+    /// applying key (not the undo key) keeps the case Telex leaves on screen: it
+    /// keeps key 1's cell and appends key 3's.
+    private func circumflexEscapeIndices(of keys: [Character]) -> Set<Int> {
+        if config.inputMethod == .vni { return [] }
+        var result = Set<Int>()
+        // Only a LITERAL run (a,a,a / e,e,e / o,o,o) is the escape. The fold also
+        // undoes across a coda (t,a,n,a,a) and over a tone key (b,e,s,e,e), but the
+        // V-C-V-V shape is ordinary English (exceed, cocoon, esteem, veneer):
+        // dropping a key there would delete a real letter.
+        for k in interpret(keys).circumflexUndoKeys
+        where k >= 2 && keys[k - 2].lowercased() == keys[k - 1].lowercased() {
+            // Before the first undo no cancel can have happened, so
+            // `showsComposedAfterCancel` cannot apply to this prefix. If eager
+            // restore was already showing raw keys, no circumflex was visible.
+            let shownComposed = !(eagerRestoreEnabled && isUnrecoverable(interpret(Array(keys[..<k]))))
+            if shownComposed { result.insert(k - 1) }
+        }
+        return result
+    }
+
+    /// `collapseDoubledLiterals` with the circumflex escapes the fold found.
+    private func collapsedRaw(_ keys: [Character]) -> [Character] {
+        Engine.collapseDoubledLiterals(keys, inputMethod: config.inputMethod,
+                                       dropping: circumflexEscapeIndices(of: keys))
     }
 
     /// Sentence-start auto-capitalize (Phase 4): uppercases the first cell,
@@ -758,12 +795,12 @@ public final class Engine {
         return unicodeTable.decode(encode(comp, table: unicodeTable))
     }
 
-    /// Both spellings the raw `keys` could commit as: the `ww`/`ddd`-collapsed
+    /// Both spellings the raw `keys` could commit as: the `ww`/`ddd`/circumflex-escape-collapsed
     /// one and the keys exactly as typed (see `collapseDoubledLiterals`); either
-    /// may be the real spelling. Equal strings (no `ww`/`ddd`) are evaluated once
+    /// may be the real spelling. Equal strings (no escape) are evaluated once
     /// by `RestoreDecision.chooseAfterCancel`.
     private func rawSpellings(of keys: [Character]) -> [String] {
-        [String(Engine.collapseDoubledLiterals(keys, inputMethod: config.inputMethod)), String(keys)]
+        [String(collapsedRaw(keys)), String(keys)]
     }
 
     /// Does the screen show the COMPOSED spelling of a cancelled word because of
