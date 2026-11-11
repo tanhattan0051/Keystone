@@ -1517,7 +1517,7 @@ in `OpenKey.mm`) types U+202F (narrow no-break space) BEFORE the Backspaces, whi
 selection, then sends ONE extra Backspace to remove it. OpenKey disables this in Spotlight. For Sublime
 Text 2/3 (`_niceSpaceApp` in `OpenKey.mm`) it sends U+200C instead of U+202F; Keystone does not.
 
-**Mechanism.** `KeystrokeExecutor.execute(..., clearInlineSuggestion:)`: when on and
+**Mechanism.** `KeystrokeExecutor.execute(..., inlineSuggestionClearing: .placeholder)`: when on and
 `backspaceCount > 0`, `postText("\u{202F}")`, `postBackspace(count: n + 1)`, then the text as before.
 Net zero when the field keeps the placeholder. U+202F plus an extra Backspace was chosen over
 OpenKey's beta Chromium variant (Shift+Left) because that one depends on the selection's direction;
@@ -1541,11 +1541,12 @@ suggestion, the engine has dropped one raw key that the screen still shows, so a
 same word can garble it (e.g. omnibox "vie" + Backspace + "ejt"). Keystone cannot tell whether a
 Backspace hit a selection; OpenKey shares this.
 
-**Terminal and Spotlight mask** (`InlineSuggestionFix.allowed`): terminals have no selection-style
-autocomplete, so an invisible character plus an extra Backspace is pure risk there; OpenKey also
-disables it in Spotlight. The per-app flags `keyFocusAppIsTerminal` / `keyFocusAppAllowsSuggestionFix`
-are updated together everywhere (AX onFocus, launch seed, app activation) and `InputBehavior` is
-pushed only when the value flips.
+**Terminal mask** (`InlineSuggestionFix.clearing(bundleID:)`): terminals have no selection-style
+autocomplete, so an invisible character plus an extra Backspace is pure risk there (`.none`). Spotlight
+no longer follows OpenKey's "off": it gets Forward Delete, see "Spotlight: Forward Delete để bỏ gợi ý"
+below. The per-app values `keyFocusAppIsTerminal` / `keyFocusAppSuggestionClearing` are updated
+together everywhere (AX onFocus, launch seed, app activation) and `InputBehavior` is pushed only when
+the value flips.
 
 **AX-failure fallback.** Keystone's AX focused-application read fails often on Tân's machine
 (AXError -25212, e.g. while Chrome has focus). Scenario: Chrome frontmost, iTerm2 F1 panel
@@ -1555,9 +1556,9 @@ false and `hoộ` is back. So `KeyFocusTracker.onFocusUnknown` (called on a fail
 ONLY this gate from `NSWorkspace.shared.frontmostApplication`. The risk is asymmetric: the gate
 wrongly OFF in a browser is the bug; wrongly ON in a terminal costs one invisible character plus an
 extra Backspace. The capitalization terminal mask and `keyFocusBundleID` keep "failed read = keep
-last known". Spotlight is a non-activating panel and is never the frontmost app, so after a failed AX
-read during a Spotlight session the fallback can turn the fix ON inside Spotlight; its mask holds only
-while AX reads succeed. Accepted, because a gate stuck OFF in Chrome is the reported bug.
+last known". After a failed AX read during a Spotlight session the fallback yields the frontmost app's
+mode (usually `.placeholder`), never Forward Delete; see the Spotlight section. Accepted, because a
+gate stuck OFF in Chrome is the reported bug.
 
 **Tracking gate.** AX tracking is needed for this toggle only while the engine can emit edits at all:
 `InlineSuggestionFix.needsFocusTracking` = `autoFixSuggestion && (vietnameseEnabled || (macrosEnabled
@@ -1596,9 +1597,57 @@ placeholder is reintroduced as an opt-in remedy, default OFF.
 - Mail "To:" field.
 - An Electron app (Slack / Discord / VS Code).
 - iTerm2 F1 panel, then back to Chrome: `hooj` still fixed.
-- Spotlight unchanged, including after AX read failures.
+- Spotlight: see the on-device list in "Spotlight: Forward Delete để bỏ gợi ý".
 - Sublime Text (OpenKey uses U+200C there; check whether U+202F misbehaves).
 - Toggle OFF: nothing changes.
+
+## Spotlight: Forward Delete để bỏ gợi ý
+
+**Triệu chứng.** Trên macOS 27.0.1, Telex `ww` trong Spotlight ra `ưw` thay vì `w`: edit là `ư`, rồi
+bs=1 + `w`, nhưng Backspace đầu chỉ xoá phần gợi ý, chữ `ư` còn lại.
+
+**Đã đo (tay, Keystone không can thiệp).** Khi ô xám (completion pill) đang hiện: một Delete chỉ xoá
+pill, chữ đã gõ còn nguyên; một Forward Delete (fn+Delete) cũng chỉ xoá pill, chữ đã gõ còn nguyên.
+
+**Host `com.apple.campo` [VERIFY].** Siri AI.app (bundle id `com.apple.campo`) link các framework
+SpotlightUI và đang chạy; log của một bộ gõ khác cho thấy ô macOS 27 báo `com.apple.campo`. Chưa quan
+sát trực tiếp cho ô Cmd+Space. Keystone coi cả `com.apple.spotlight` và `com.apple.campo` là
+`.forwardDelete` (so khớp không phân biệt hoa/thường).
+
+**Chỉ chạy khi bật "Sửa lỗi gợi ý".** Toggle này mặc định TẮT; tắt thì Spotlight vẫn ra `ưw`.
+
+**Vì sao không dùng placeholder ở đây.** Placeholder (U+202F + Backspace thừa) giả định phần gợi ý là
+vùng chọn bị thay thế khi gõ. Pill "— tên file" không phải phần nối tiếp chữ đã gõ nên có thể không
+phải vùng chọn (chưa đo), và ký tự đệm là một lần chèn thật có thể kích hoạt gợi ý mới. Forward Delete
+đã đo là chỉ bỏ pill. Giả định, chưa đo: không có pill thì nó là no-op ở cuối văn bản, và pill không
+quay lại giữa các Backspace, nên N Backspace giữ nguyên số đếm. `KeystrokeExecutor` gửi Forward Delete
+1 lần rồi N Backspace; `backspaceCount == 0` thì không gửi gì thêm. Phím Xoá lùi thuần của người dùng
+(không gõ lại) vẫn bỏ qua (`.none`), nên vẫn chỉ xoá pill.
+
+**AX-failure fallback không bao giờ ra Forward Delete.** Khi đọc AX lỗi, `onFocusUnknown` dùng
+`clearingWhenFocusUnknown(frontmostBundleID:)`: mode của app frontmost, riêng `.forwardDelete` hạ thành
+`.none` (kể cả khi Siri AI đang frontmost). Một Forward Delete sai app có thể xoá chữ sau con trỏ. Hệ
+quả: trong phiên Spotlight mà AX đọc lỗi, mode là của app frontmost (thường là placeholder), nên `ưw`
+vẫn có thể xuất hiện chập chờn và U+202F có thể lọt vào truy vấn.
+
+**Rủi ro chấp nhận.**
+- Nếu con trỏ nằm GIỮA văn bản trong ô campo, Forward Delete xoá chữ sau con trỏ.
+- NSEvent monitor có thể thấy Forward Delete tổng hợp và `FocusResetPolicy` coi key 117 là boundary, nên
+  ước lượng đầu từ có thể lệch. Chỉ ảnh hưởng khi một panel không kích hoạt lấy focus ngay trong cửa sổ
+  refresh 0.1s sau một lần sửa chữ trong Spotlight.
+
+**Tân xác nhận trên máy thật 2026-11-11** (bản thử cài vào /Applications, macOS 27.0.1): gõ trong
+Spotlight đã đúng. Các mục dưới đây chưa được ghi nhận riêng từng mục.
+
+**On-device [VERIFY].** Bật "Sửa lỗi gợi ý" trước khi thử.
+- Cmd+Space: `ww` -> `w`; `uww`, `hooj`, `dduwowcj`, `vieejt` đúng như ô không có pill.
+- Từ có bs >= 2 (`vieejt`): pill không quay lại giữa các Backspace.
+- Forward Delete khi không có pill, con trỏ ở cuối: không đổi gì.
+- Bundle id thật của ô Cmd+Space khi gõ (campo hay spotlight).
+- Backspace thuần khi pill đang hiện: chỉ xoá pill.
+- Con trỏ giữa văn bản trong Spotlight: ghi lại chữ nào bị mất.
+- Sau khi AX đọc lỗi (iTerm2 F1 rồi về Spotlight): ghi lại có còn `ưw` không.
+- Chrome / Safari / Excel không đổi (vẫn placeholder); Terminal vẫn `.none`.
 
 ## Bảng mã mặc định — Unicode dựng sẵn (NFC), không phải tổ hợp
 

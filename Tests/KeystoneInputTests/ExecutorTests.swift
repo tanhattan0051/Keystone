@@ -13,6 +13,7 @@ private final class FakeSink: EventSink {
 
     func postBackspace(count: Int) { backspaces.append(count) }
     func postText(_ text: String) { texts.append(text) }
+    func postForwardDelete() {}
 }
 
 @Suite("Executor")
@@ -82,7 +83,7 @@ struct ExecutorTests {
     }
 }
 
-// MARK: - clearInlineSuggestion ("Sửa lỗi gợi ý" inline-autocomplete fix)
+// MARK: - inlineSuggestionClearing ("Sửa lỗi gợi ý" inline-autocomplete fix)
 //
 // Order matters here (placeholder text BEFORE the backspaces), which the
 // two-array FakeSink above cannot express, so these use a single ordered log.
@@ -90,43 +91,45 @@ struct ExecutorTests {
 private enum Op: Equatable {
     case text(String)
     case backspace(Int)
+    case forwardDelete
 }
 
 private final class OrderSink: EventSink {
     var ops: [Op] = []
     func postBackspace(count: Int) { ops.append(.backspace(count)) }
     func postText(_ text: String) { ops.append(.text(text)) }
+    func postForwardDelete() { ops.append(.forwardDelete) }
 }
 
-@Suite("Executor clearInlineSuggestion")
+@Suite("Executor inlineSuggestionClearing")
 struct ExecutorInlineSuggestionTests {
     private let placeholder = "\u{202F}"
 
     @Test func flagOnWithBackspaceTypesPlaceholderThenOneExtraBackspace() {
         let sink = OrderSink()
         KeystrokeExecutor(sink: sink)
-            .execute(EngineResult(backspaceCount: 1, text: "ô"), clearInlineSuggestion: true)
+            .execute(EngineResult(backspaceCount: 1, text: "ô"), inlineSuggestionClearing: .placeholder)
         #expect(sink.ops == [.text(placeholder), .backspace(2), .text("ô")])
     }
 
     @Test func flagOnWithoutBackspaceIsUnchanged() {
         let sink = OrderSink()
         KeystrokeExecutor(sink: sink)
-            .execute(EngineResult(backspaceCount: 0, text: "a"), clearInlineSuggestion: true)
+            .execute(EngineResult(backspaceCount: 0, text: "a"), inlineSuggestionClearing: .placeholder)
         #expect(sink.ops == [.text("a")])
     }
 
     @Test func flagOffIsUnchanged() {
         let sink = OrderSink()
         KeystrokeExecutor(sink: sink)
-            .execute(EngineResult(backspaceCount: 2, text: "việt"), clearInlineSuggestion: false)
+            .execute(EngineResult(backspaceCount: 2, text: "việt"), inlineSuggestionClearing: .none)
         #expect(sink.ops == [.backspace(2), .text("việt")])
     }
 
     @Test func flagOnWithEachGraphemeSendsPlaceholderOnce() {
         let sink = OrderSink()
         KeystrokeExecutor(sink: sink)
-            .execute(EngineResult(backspaceCount: 2, text: "việt"), eachGrapheme: true, clearInlineSuggestion: true)
+            .execute(EngineResult(backspaceCount: 2, text: "việt"), eachGrapheme: true, inlineSuggestionClearing: .placeholder)
         #expect(sink.ops == [.text(placeholder), .backspace(3),
                              .text("v"), .text("i"), .text("ệ"), .text("t")])
     }
@@ -134,7 +137,36 @@ struct ExecutorInlineSuggestionTests {
     @Test func flagOnWithBackspaceAndEmptyTextSendsNoText() {
         let sink = OrderSink()
         KeystrokeExecutor(sink: sink)
-            .execute(EngineResult(backspaceCount: 3, text: ""), clearInlineSuggestion: true)
+            .execute(EngineResult(backspaceCount: 3, text: ""), inlineSuggestionClearing: .placeholder)
         #expect(sink.ops == [.text(placeholder), .backspace(4)])
+    }
+
+    @Test func forwardDeleteComesFirstThenBackspacesThenText() {
+        let sink = OrderSink()
+        KeystrokeExecutor(sink: sink)
+            .execute(EngineResult(backspaceCount: 1, text: "w"), inlineSuggestionClearing: .forwardDelete)
+        #expect(sink.ops == [.forwardDelete, .backspace(1), .text("w")])
+    }
+
+    @Test func forwardDeleteDoesNotChangeTheBackspaceCount() {
+        let sink = OrderSink()
+        KeystrokeExecutor(sink: sink)
+            .execute(EngineResult(backspaceCount: 3, text: ""), inlineSuggestionClearing: .forwardDelete)
+        #expect(sink.ops == [.forwardDelete, .backspace(3)])
+    }
+
+    @Test func noForwardDeleteWithoutBackspace() {
+        let sink = OrderSink()
+        KeystrokeExecutor(sink: sink)
+            .execute(EngineResult(backspaceCount: 0, text: "a"), inlineSuggestionClearing: .forwardDelete)
+        #expect(sink.ops == [.text("a")])
+    }
+
+    @Test(arguments: [InlineSuggestionClearing.none, .placeholder])
+    func noForwardDeleteUnlessRequested(mode: InlineSuggestionClearing) {
+        let sink = OrderSink()
+        KeystrokeExecutor(sink: sink)
+            .execute(EngineResult(backspaceCount: 2, text: "việt"), inlineSuggestionClearing: mode)
+        #expect(!sink.ops.contains(.forwardDelete))
     }
 }

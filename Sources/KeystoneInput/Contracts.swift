@@ -62,6 +62,8 @@ public enum KeyDecision: Equatable, Sendable {
 /// production and by a recording fake in tests.
 public protocol EventSink {
     func postBackspace(count: Int)
+    /// One Forward Delete (fn+Delete, virtual key 117).
+    func postForwardDelete()
     func postText(_ text: String)
 }
 
@@ -78,21 +80,22 @@ public struct InputBehavior: Sendable, Equatable {
     /// for browsers/Excel). Default false = both events carry the string,
     /// the tap's original behavior; this is an opt-in remedy.
     public var textOnKeyDownOnly: Bool
-    /// "Sửa lỗi gợi ý" — before the backspaces, type a placeholder character
-    /// and send one extra Backspace (see `KeystrokeExecutor.execute`). Needed
-    /// because an inline-autocomplete selection (Chrome omnibox, Excel) eats
-    /// the first synthetic Backspace, leaving the old character behind
-    /// ("hộ" -> "hoộ"). Mirrors OpenKey's workaround. Already masked per app
-    /// by the caller (off in terminals/Spotlight); default false.
-    public var clearsInlineSuggestion: Bool
+    /// "Sửa lỗi gợi ý" — how to clear an inline suggestion before the
+    /// backspaces (see `KeystrokeExecutor.execute`). Needed because an
+    /// inline-autocomplete selection (Chrome omnibox, Excel) or Spotlight's
+    /// completion pill eats the first synthetic Backspace, leaving the old
+    /// character behind ("hộ" -> "hoộ", "ww" -> "ưw"). `.placeholder` mirrors
+    /// OpenKey's workaround, `.forwardDelete` is for Spotlight. Already chosen
+    /// per app by the caller (`.none` in terminals); default `.none`.
+    public var inlineSuggestionClearing: InlineSuggestionClearing
 
     public init(
         sendEachKeystroke: Bool = false,
         textOnKeyDownOnly: Bool = false,
-        clearsInlineSuggestion: Bool = false
+        inlineSuggestionClearing: InlineSuggestionClearing = .none
     ) {
         self.sendEachKeystroke = sendEachKeystroke
         self.textOnKeyDownOnly = textOnKeyDownOnly
-        self.clearsInlineSuggestion = clearsInlineSuggestion
+        self.inlineSuggestionClearing = inlineSuggestionClearing
     }
 }

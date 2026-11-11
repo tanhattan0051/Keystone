@@ -9,18 +9,33 @@ import Testing
 @Suite("InlineSuggestionFix")
 struct InlineSuggestionFixTests {
     @Test(arguments: ["com.apple.Terminal", "com.googlecode.iterm2", "COM.APPLE.TERMINAL", "dev.warp.Warp-Stable"])
-    func disabledInTerminals(id: String) {
-        #expect(!InlineSuggestionFix.allowed(bundleID: id))
+    func noClearingInTerminals(id: String) {
+        #expect(InlineSuggestionFix.clearing(bundleID: id) == .none)
     }
 
-    @Test(arguments: ["com.apple.Spotlight", "com.apple.spotlight", "COM.APPLE.SPOTLIGHT"])
-    func disabledInSpotlight(id: String) {
-        #expect(!InlineSuggestionFix.allowed(bundleID: id))
+    @Test(arguments: [
+        "com.apple.Spotlight", "com.apple.spotlight", "COM.APPLE.SPOTLIGHT",
+        "com.apple.campo", "com.apple.Campo", "COM.APPLE.CAMPO",
+    ])
+    func forwardDeleteInSpotlightAndItsHost(id: String) {
+        #expect(InlineSuggestionFix.clearing(bundleID: id) == .forwardDelete)
     }
 
     @Test(arguments: ["com.google.Chrome", "com.apple.Safari", "com.microsoft.Excel", "", String?.none as String?])
-    func allowedElsewhere(id: String?) {
-        #expect(InlineSuggestionFix.allowed(bundleID: id))
+    func placeholderElsewhere(id: String?) {
+        #expect(InlineSuggestionFix.clearing(bundleID: id) == .placeholder)
+    }
+
+    // A failed focus read must never produce Forward Delete: the frontmost app
+    // may not be the one holding key focus (non-activating panels).
+    @Test(arguments: ["com.apple.Spotlight", "com.apple.campo", "COM.APPLE.CAMPO", "com.apple.Terminal"])
+    func unknownFocusNeverForwardDeletes(frontmost: String) {
+        #expect(InlineSuggestionFix.clearingWhenFocusUnknown(frontmostBundleID: frontmost) == .none)
+    }
+
+    @Test(arguments: ["com.google.Chrome", "com.apple.Safari", "", String?.none as String?])
+    func unknownFocusKeepsThePlaceholderElsewhere(frontmost: String?) {
+        #expect(InlineSuggestionFix.clearingWhenFocusUnknown(frontmostBundleID: frontmost) == .placeholder)
     }
 
     private static let allDecisions: [KeyDecision] = [
@@ -50,6 +65,22 @@ struct InlineSuggestionFixTests {
     func neverAppliesWhenDisabledForApp(decision: KeyDecision) {
         #expect(!InlineSuggestionFix.appliesToEdit(enabledForApp: false, decision: decision, edit: Self.rerender))
         #expect(!InlineSuggestionFix.appliesToEdit(enabledForApp: false, decision: decision, edit: Self.pureDeletion))
+    }
+
+    @Test(arguments: [InlineSuggestionClearing.placeholder, .forwardDelete])
+    func configuredClearingSurvivesARealEdit(configured: InlineSuggestionClearing) {
+        #expect(InlineSuggestionFix.clearing(configured: configured, decision: .character("a"), edit: Self.rerender) == configured)
+        #expect(InlineSuggestionFix.clearing(configured: configured, decision: .backspace, edit: Self.rerender) == configured)
+    }
+
+    @Test(arguments: [InlineSuggestionClearing.placeholder, .forwardDelete])
+    func pureDeletionBackspaceIsNeverCleared(configured: InlineSuggestionClearing) {
+        #expect(InlineSuggestionFix.clearing(configured: configured, decision: .backspace, edit: Self.pureDeletion) == .none)
+    }
+
+    @Test(arguments: allDecisions)
+    func noneStaysNone(decision: KeyDecision) {
+        #expect(InlineSuggestionFix.clearing(configured: .none, decision: decision, edit: Self.rerender) == .none)
     }
 
     @Test func trackingNeededOnlyWhenTheEngineCanEmitEdits() {

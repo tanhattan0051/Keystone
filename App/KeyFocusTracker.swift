@@ -11,8 +11,8 @@
 // kAXFocusedApplicationAttribute as "the application element that is
 // currently accepting keyboard input" — exactly the question AppModel needs
 // answered to mask autoCapitalize while a terminal has focus — and, for the
-// same reason, to mask the "Sửa lỗi gợi ý" placeholder in terminals and
-// Spotlight (InlineSuggestionFix). See
+// same reason, to pick the "Sửa lỗi gợi ý" mode per app: off in terminals,
+// Forward Delete in Spotlight (InlineSuggestionFix). See
 // DECISIONS.md "Không tự viết hoa trong Terminal" → "Floating panels follow
 // keyboard focus, not activation" for the research behind this
 // (Karabiner-Elements, Input Source Pro, Hammerspoon all read AX for the

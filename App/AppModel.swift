@@ -279,7 +279,8 @@ final class AppModel {
     /// and (2) before each edit that deletes text, types a placeholder and
     /// sends one extra Backspace so an inline-autocomplete selection (Chrome
     /// omnibox) cannot swallow the first Backspace ("hộ" -> "hoộ"); (2) is
-    /// masked off in terminals and Spotlight (`InlineSuggestionFix`). Default
+    /// replaced by one Forward Delete in Spotlight and masked off in terminals
+    /// (`InlineSuggestionFix`). Default
     /// OFF: both keyDown+keyUp carry the string and nothing extra is sent,
     /// unchanged from the tap's original behavior. Rationale and trade-offs:
     /// DECISIONS.md "Sửa lỗi gợi ý: xoá phần gợi ý tự điền trước khi xoá lùi".
@@ -535,13 +536,13 @@ final class AppModel {
     /// terminal already open before launch, or Keystone itself being
     /// frontmost, both matter here), so it starts `false` instead.
     private var keyFocusAppIsTerminal = false
-    /// Whether the app currently accepting keyboard input may receive the
-    /// inline-autocomplete workaround (`InlineSuggestionFix.allowed`) — false
-    /// in terminals and Spotlight. Same feeding/seeding as
+    /// How the app currently accepting keyboard input clears an inline
+    /// suggestion (`InlineSuggestionFix.clearing(bundleID:)`) — `.none` in
+    /// terminals, `.forwardDelete` in Spotlight. Same feeding/seeding as
     /// `keyFocusAppIsTerminal`, except that a failed AX read re-derives it from
     /// the frontmost app (`onFocusUnknown`) instead of keeping the last value;
-    /// starts `true` (unbundled/unknown is allowed).
-    private var keyFocusAppAllowsSuggestionFix = true
+    /// starts `.placeholder` (unbundled/unknown gets the placeholder).
+    private var keyFocusAppSuggestionClearing: InlineSuggestionClearing = .placeholder
     /// AX-based correction for `keyFocusAppIsTerminal`: a non-activating
     /// floating panel (e.g. iTerm2's F1 hotkey window) can take keyboard
     /// focus without ever firing `NSWorkspace.didActivateApplicationNotification`,
@@ -641,14 +642,16 @@ final class AppModel {
         // in a terminal = one invisible character + an extra Backspace. So on
         // a failed read, fall back to the frontmost app — for this gate only;
         // the terminal mask and keyFocusBundleID keep "failed read = keep last".
-        // Spotlight side: it is a non-activating panel, never the frontmost
-        // app, so after a failed read during a Spotlight session this can turn
-        // the fix ON inside it; its mask holds only while AX reads succeed.
+        // A failed read never yields Forward Delete, which could delete text
+        // after the caret in another app, so the Spotlight "ưw" bug can still
+        // appear intermittently when AX reads fail: during such a session the
+        // frontmost app's mode applies, usually the placeholder.
         // Accepted: a gate stuck OFF in Chrome is the reported bug.
         keyFocusTracker.onFocusUnknown = { [weak self] in
             self?.focusTriggerTime = nil
-            self?.updateKeyFocusAppAllowsSuggestionFix(
-                bundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+            self?.applyKeyFocusAppSuggestionClearing(
+                InlineSuggestionFix.clearingWhenFocusUnknown(
+                    frontmostBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier))
         }
         keyFocusTracker.onFocus = { [weak self] bundleID in
             guard let self else { return }
@@ -681,7 +684,7 @@ final class AppModel {
             }
             self.focusTriggerTime = nil
             self.updateKeyFocusAppIsTerminal(bundleID: bundleID)
-            self.updateKeyFocusAppAllowsSuggestionFix(bundleID: bundleID)
+            self.updateKeyFocusAppSuggestionClearing(bundleID: bundleID)
         }
         applySwitchHotKeyRegistration()
         installSwitchKeyMonitors()
@@ -697,7 +700,7 @@ final class AppModel {
         let launchBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         keyFocusBundleID = launchBundleID
         updateKeyFocusAppIsTerminal(bundleID: launchBundleID)
-        updateKeyFocusAppAllowsSuggestionFix(bundleID: launchBundleID)
+        updateKeyFocusAppSuggestionClearing(bundleID: launchBundleID)
         // Same for per-app memory: no activation fires for the app already in
         // front, so seed currentBundleID too — a V/E toggle made there is then
         // remembered for it like for any other app. We also APPLY what was
@@ -900,13 +903,16 @@ final class AppModel {
         pushConfig()
     }
 
-    /// Recomputes `keyFocusAppAllowsSuggestionFix` for `bundleID` and pushes
+    /// Recomputes `keyFocusAppSuggestionClearing` for `bundleID` and pushes
     /// `InputBehavior` only when it flips — same push-on-flip pattern as
     /// `updateKeyFocusAppIsTerminal(bundleID:)`.
-    private func updateKeyFocusAppAllowsSuggestionFix(bundleID: String?) {
-        let allowed = InlineSuggestionFix.allowed(bundleID: bundleID)
-        guard allowed != keyFocusAppAllowsSuggestionFix else { return }
-        keyFocusAppAllowsSuggestionFix = allowed
+    private func updateKeyFocusAppSuggestionClearing(bundleID: String?) {
+        applyKeyFocusAppSuggestionClearing(InlineSuggestionFix.clearing(bundleID: bundleID))
+    }
+
+    private func applyKeyFocusAppSuggestionClearing(_ clearing: InlineSuggestionClearing) {
+        guard clearing != keyFocusAppSuggestionClearing else { return }
+        keyFocusAppSuggestionClearing = clearing
         pushInputBehavior()
     }
 
@@ -970,7 +976,7 @@ final class AppModel {
         wordStartTracker.reset()
         keyFocusBundleID = newBundleID
         updateKeyFocusAppIsTerminal(bundleID: newBundleID)
-        updateKeyFocusAppAllowsSuggestionFix(bundleID: newBundleID)
+        updateKeyFocusAppSuggestionClearing(bundleID: newBundleID)
 
         guard
             let newBundleID,
@@ -1321,7 +1327,7 @@ final class AppModel {
         tap.updateBehavior(InputBehavior(
             sendEachKeystroke: sendEachKeystroke,
             textOnKeyDownOnly: autoFixSuggestion,
-            clearsInlineSuggestion: autoFixSuggestion && keyFocusAppAllowsSuggestionFix
+            inlineSuggestionClearing: autoFixSuggestion ? keyFocusAppSuggestionClearing : .none
         ))
     }
 
