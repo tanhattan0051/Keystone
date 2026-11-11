@@ -116,7 +116,7 @@ private struct BasicPane: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Toggle("Sửa lỗi gợi ý (trình duyệt, Excel,...)", isOn: $model.autoFixSuggestion)
-                Text("Né lỗi nhân đôi ký tự, và sửa lỗi gõ trên thanh địa chỉ trình duyệt / ô có gợi ý tự điền (vd. gõ hộ ra hoộ) — phần này không áp dụng trong Terminal và Spotlight. Đánh đổi: ô tự xoá khoảng trắng có thể mất 1 chữ.")
+                Text("Né lỗi nhân đôi ký tự, và sửa lỗi gõ trên thanh địa chỉ trình duyệt / ô có gợi ý tự điền (vd. gõ hộ ra hoộ) — phần này không áp dụng trong Terminal. Đánh đổi: ô tự xoá khoảng trắng có thể mất 1 chữ.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Toggle("Cho phép bỏ dấu tự do", isOn: $model.allowFreeToneMark)

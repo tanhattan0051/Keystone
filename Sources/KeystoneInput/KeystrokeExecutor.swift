@@ -12,7 +12,7 @@ public struct KeystrokeExecutor {
         self.sink = sink
     }
 
-    /// Placeholder typed before the backspaces by `clearInlineSuggestion`
+    /// Placeholder typed before the backspaces by `inlineSuggestionClearing`
     /// (U+202F narrow no-break space — OpenKey's `SendEmptyCharacter`). It is
     /// a real insertion, so it REPLACES any selected inline-autocomplete
     /// suffix; the extra Backspace that follows then removes the placeholder
@@ -24,25 +24,33 @@ public struct KeystrokeExecutor {
     ///   one `Character` (grapheme cluster) at a time instead of a single
     ///   `postText` call. Defaults to false so existing call sites compile
     ///   unchanged.
-    /// - Parameter clearInlineSuggestion: "Sửa lỗi gợi ý" — Chrome's omnibox
+    /// - Parameter inlineSuggestionClearing: "Sửa lỗi gợi ý" — Chrome's omnibox
     ///   (and similar fields) keeps an inline-autocomplete suffix SELECTED
     ///   after the caret, so the first synthetic Backspace only deletes that
     ///   selection and the character we meant to replace survives ("hoô").
-    ///   When true and there is something to delete, type a placeholder
-    ///   first (replacing the selection) and send one extra Backspace for it.
-    ///   Net zero when the field keeps the placeholder. Skipped when
-    ///   `backspaceCount == 0`: a plain insertion already replaces a
-    ///   selection by itself.
+    ///   `.placeholder`: type a placeholder first (replacing the selection)
+    ///   and send one extra Backspace for it; net zero when the field keeps
+    ///   the placeholder. `.forwardDelete`: Spotlight shows a grey completion
+    ///   pill that a Backspace also removes alone ("ww" -> "ưw"). A
+    ///   placeholder is not safe there, but one Forward Delete removes only
+    ///   the pill, and with no pill showing it is a no-op at the end of text,
+    ///   so the N Backspaces stay exact. Nothing extra is sent when
+    ///   `backspaceCount == 0` in any mode: a plain insertion already
+    ///   replaces a selection by itself.
     public func execute(
         _ result: EngineResult,
         eachGrapheme: Bool = false,
-        clearInlineSuggestion: Bool = false
+        inlineSuggestionClearing: InlineSuggestionClearing = .none
     ) {
         if result.backspaceCount > 0 {
-            if clearInlineSuggestion {
+            switch inlineSuggestionClearing {
+            case .none:
+                sink.postBackspace(count: result.backspaceCount)
+            case .placeholder:
                 sink.postText(Self.inlineSuggestionPlaceholder)
                 sink.postBackspace(count: result.backspaceCount + 1)
-            } else {
+            case .forwardDelete:
+                sink.postForwardDelete()
                 sink.postBackspace(count: result.backspaceCount)
             }
         }

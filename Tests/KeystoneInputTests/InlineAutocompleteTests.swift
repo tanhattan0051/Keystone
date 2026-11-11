@@ -1,6 +1,6 @@
 // InlineAutocompleteTests.swift — end-to-end repro of the Chrome omnibox bug
 // (typing Telex "hooj" gives "hoộ") against a faithful model of inline
-// autocomplete, and proof that `clearInlineSuggestion` fixes it.
+// autocomplete, and proof that `inlineSuggestionClearing` fixes it.
 //
 // The omnibox, after each insertion, shows the typed text plus a SELECTED
 // suffix from history. The first Backspace therefore deletes only that
@@ -35,6 +35,36 @@ private final class InlineAutocompleteField: EventSink {
             else if !typed.isEmpty { typed.removeLast() }
         }
     }
+
+    func postForwardDelete() {}   // the omnibox never receives it (placeholder/none only)
+}
+
+/// Model of Spotlight on macOS 27.0.1. Measured by hand: with the grey pill
+/// showing, one Delete or one Forward Delete removes only the pill. Assumed,
+/// [VERIFY] on device: a pill shows after every insertion, Forward Delete with
+/// no pill is a no-op at the end of text, and a deletion does not bring the
+/// pill back (edits with bs >= 2 depend on this).
+private final class SpotlightField: EventSink {
+    private(set) var typed: [Unicode.Scalar] = []
+    private(set) var pillShowing = false
+
+    var typedText: String { String(String.UnicodeScalarView(typed)) }
+
+    func postText(_ text: String) {
+        typed.append(contentsOf: text.unicodeScalars)
+        pillShowing = !typed.isEmpty
+    }
+
+    func postBackspace(count: Int) {
+        for _ in 0..<count {
+            if pillShowing { pillShowing = false }
+            else if !typed.isEmpty { typed.removeLast() }
+        }
+    }
+
+    func postForwardDelete() {
+        pillShowing = false   // nothing after the caret otherwise
+    }
 }
 
 private func type(_ keys: [RawKey], history: [String], fix: Bool) -> String {
@@ -48,7 +78,25 @@ private func type(_ keys: [RawKey], history: [String], fix: Bool) -> String {
         if let edit {
             executor.execute(
                 edit,
-                clearInlineSuggestion: InlineSuggestionFix.appliesToEdit(enabledForApp: fix, decision: decision, edit: edit)
+                inlineSuggestionClearing: InlineSuggestionFix.clearing(
+                    configured: fix ? .placeholder : .none, decision: decision, edit: edit)
+            )
+        }
+    }
+    return field.typedText
+}
+
+private func typeIntoSpotlight(_ keys: [RawKey], clearing: InlineSuggestionClearing) -> String {
+    let field = SpotlightField()
+    let engine = EngineController(config: EngineConfig())
+    let executor = KeystrokeExecutor(sink: field)
+    for key in keys {
+        let (_, edit, decision) = engine.handle(key)
+        if let edit {
+            executor.execute(
+                edit,
+                inlineSuggestionClearing: InlineSuggestionFix.clearing(
+                    configured: clearing, decision: decision, edit: edit)
             )
         }
     }
@@ -107,5 +155,29 @@ struct InlineAutocompleteTests {
     @Test(arguments: ["hooj", "vieejt", "dduwowcj", "tooi", "xin chaof"])
     func emptyHistoryIsNetZero(telex: String) {
         #expect(type(telex, history: [], fix: true) == type(telex, history: [], fix: false))
+    }
+}
+
+@Suite("Spotlight completion pill")
+struct SpotlightPillTests {
+    private func keys(_ telex: String) -> [RawKey] { telex.map(letter) }
+
+    @Test func wwWithoutClearingLeavesTheReportedStrayW() {
+        #expect(typeIntoSpotlight(keys("ww"), clearing: .none) == "ưw")
+    }
+
+    @Test func wwWithForwardDeleteIsW() {
+        #expect(typeIntoSpotlight(keys("ww"), clearing: .forwardDelete) == "w")
+    }
+
+    @Test(arguments: ["uww", "hooj", "dduwowcj", "vieejt"])
+    func forwardDeleteMatchesAFieldWithNoPill(telex: String) {
+        let expected = type(telex, history: [], fix: false)
+        #expect(typeIntoSpotlight(keys(telex), clearing: .forwardDelete) == expected)
+    }
+
+    @Test func usersPureBackspaceStillDismissesOnlyThePill() {
+        let all = keys("face") + [BACKSPACE]
+        #expect(typeIntoSpotlight(all, clearing: .forwardDelete) == "face")
     }
 }
